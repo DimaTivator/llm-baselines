@@ -3,6 +3,7 @@ import copy
 from pathlib import Path
 import time
 import yaml
+import os
 
 import torch
 import wandb
@@ -119,6 +120,14 @@ def train(
     else:
         pbar = None
 
+    # MEMORY_BENCH: lists that accumulate one entry per measurement point
+    if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
+        _mem_before_batch    = []
+        _mem_before_step_fwd = []
+        _mem_after_step_fwd  = []
+        _mem_after_step_bwd  = []
+        _mem_after_batch     = []
+
     while curr_iter <= cfg.iterations:
         # Save permanent checkpoint
         if cfg.permanent_ckpt_interval > 0:
@@ -183,10 +192,44 @@ def train(
             # Save checkpoints and evaluate at final iteration, but no need to train further
             break
 
+        # MEMORY_BENCH: Before batch
+        # Content: weights + opt states
+        if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
+            if distributed_backend.is_master_process():
+                memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
+                _mem_before_batch.append(memory_usage)
+
         # Train model
         t_start = time.perf_counter_ns()
+        if "cuda" in cfg.device:
+            torch.cuda.reset_peak_memory_stats()
+
+        # FP8 weight-cache management: recompute FP8 weight scales on the first
+        # microbatch of every optimizer step; reuse cached scales for the rest.
+        _use_fp8 = getattr(cfg, "fp8", False) or getattr(cfg, "fp8_optim", False)
+        if _use_fp8:
+            import sys as _sys, os as _os
+            _root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+            if _root not in _sys.path:
+                _sys.path.insert(0, _root)
+            from third_party.coat.utils._fp8manager import FP8Manager
+            FP8Manager.is_first_microbatch = True
+
+        # MEMORY_BENCH: Before batch (alternative)
+        # I'm just curious whether these is different from the above 
+        if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
+            if distributed_backend.is_master_process():
+                memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
+                assert _mem_before_batch[-1] == memory_usage, "THEY ARE DIFFERENT"
+
         for microstep_idx in range(cfg.acc_steps):  # gradient accumulation
             x, y = get_batch(train_reader, device=cfg.device)
+            # MEMORY_BENCH: Before step forward
+            # Content: weights + opt states + grads (from prev microbatches)
+            if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
+                if distributed_backend.is_master_process():
+                    memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
+                    _mem_before_step_fwd.append(memory_usage)
             with type_ctx:
                 with distributed_backend.get_context_for_microstep_forward(
                     model=model,
@@ -195,15 +238,41 @@ def train(
                 ):
                     outputs = model(x, targets=y)
 
+            # MEMORY_BENCH: After step forward
+            # Content: weights + opt states + grads (from prev microbatches) + activations
+            if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
+                if distributed_backend.is_master_process():
+                    memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
+                    _mem_after_step_fwd.append(memory_usage)
+
             loss = outputs["loss"] / cfg.acc_steps
             with type_ctx:
                 loss.backward()
             substep += 1
 
+            # MEMORY_BENCH: After step backward
+            # Content: weights + opt states + grads
+            if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
+                if distributed_backend.is_master_process():
+                    memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
+                    _mem_after_step_bwd.append(memory_usage)
+
+            # After first microbatch: subsequent microsteps reuse cached FP8 scales
+            if _use_fp8 and microstep_idx == 0:
+                FP8Manager.is_first_microbatch = False
+
         if cfg.grad_clip != 0.0:
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip).item()
         if cfg.opt == "SFAdamW":
             opt.train()
+        
+        # MEMORY_BENCH: After batch
+        # Content: weights + opt states + accumulated grads
+        if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
+            if distributed_backend.is_master_process():
+                memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
+                _mem_after_batch.append(memory_usage)
+        
         opt.step()
         scheduler.step()
         opt.zero_grad(set_to_none=True)
@@ -219,6 +288,33 @@ def train(
         if distributed_backend.is_master_process():
             pbar.update(1)
 
+        if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
+            if curr_iter == 10 and distributed_backend.is_master_process():
+                import math
+                n_fwd = len(_mem_after_step_fwd)  # = 10 * acc_steps
+                total_memory      = _mem_after_step_fwd[-1]
+                model_memory      = _mem_before_batch[0]
+                activation_memory = _mem_after_step_fwd[0] - _mem_before_step_fwd[0]
+                optimizer_memory  = _mem_after_batch[1] - _mem_after_batch[0]
+                gradient_memory   = _mem_after_step_fwd[-1] - _mem_after_step_fwd[-n_fwd // 10]
+                assert math.isclose(
+                    total_memory,
+                    model_memory + activation_memory + optimizer_memory + gradient_memory,
+                    rel_tol=1e-2, abs_tol=100,
+                ), (
+                    f"Memory breakdown mismatch: total={total_memory:.1f} MB "
+                    f"!= sum={model_memory + activation_memory + optimizer_memory + gradient_memory:.1f} MB"
+                )
+                print(
+                    f"\n[MEMORY BENCH] Statistics collected over 10 steps\n"
+                    f"  Total Memory     : {total_memory:.1f} MB\n"
+                    f"  Model Memory     : {model_memory:.1f} MB\n"
+                    f"  Activation Memory: {activation_memory:.1f} MB\n"
+                    f"  Optimizer Memory : {optimizer_memory:.1f} MB\n"
+                    f"  Gradient Memory  : {gradient_memory:.1f} MB\n"
+                )
+                exit(0)
+
         if (
             cfg.log_interval
             and curr_iter % cfg.log_interval == 0
@@ -228,10 +324,14 @@ def train(
 
             current_lrs = [param_group["lr"] for param_group in opt.param_groups]
 
+            peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9 if "cuda" in cfg.device else 0.0
+            reserved_mem_gb = torch.cuda.memory_reserved() / 1e9 if "cuda" in cfg.device else 0.0
+
             print(
                 f"Train: Iter={curr_iter} ({epoch:0.3f} epochs) "
                 f"train_loss={train_loss:.3f} iter_dt={dt:.2e}s "
-                f"lr={current_lrs[0]:.2e}"
+                f"lr={current_lrs[0]:.2e} "
+                f"peak_mem={peak_mem_gb:.2f}GB"
             )
 
             if cfg.wandb:
@@ -245,6 +345,8 @@ def train(
                         "consumed_tokens": curr_iter * ws * cfg.acc_steps * cfg.batch_size * cfg.sequence_length,
                         "tok_gpu_sec": cfg.sequence_length * cfg.batch_size * cfg.acc_steps / dt,
                         "grad_norm": grad_norm,
+                        "memory/peak_allocated_gb": peak_mem_gb,
+                        "memory/reserved_gb": reserved_mem_gb,
                     }
                 )
     return stats

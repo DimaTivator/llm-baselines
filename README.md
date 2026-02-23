@@ -1,76 +1,53 @@
-# Quartet II: Accurate LLM Pre-Training in NVFP4 by Improved Unbiased Gradient Estimation
+# fp8-pretrain
 
-This is the official code for the Quartet II NVFP4 training paper [![arXiv](https://img.shields.io/badge/arXiv-2601.22813-b31b1b.svg)](https://arxiv.org/abs/2601.22813) 
+## Directory layout
 
-<img width="1286" height="521" alt="image" src="https://github.com/user-attachments/assets/2925e164-9998-4f43-9b6e-b806b8b5964b" />
+```
+fp8-pretrain/
+├── README.md
+├── requirements.txt
+├── setup_env.sh               # create conda env + compile COAT CUDA kernels
+├── scripts/
+│   └── train.sh               # single/multi-GPU launch (H100)
+├── src/
+│   ├── main.py
+│   ├── config/base.py         # all CLI args (includes FP8 flags)
+│   ├── data/                  # C4, SlimPajama, OpenWebText2, … loaders
+│   ├── models/
+│   │   ├── base.py            # BF16 GPT base
+│   │   ├── llama.py           # BF16 Llama baseline
+│   │   ├── fp8_llama.py       # ← Llama with COAT FP8 ops (main new file)
+│   │   └── utils.py
+│   ├── optim/                 # training loop, LR schedules, weight averaging
+│   ├── logger/                # WandB + dynamics logger
+│   └── distributed/           # DDP backend abstraction
+└── third_party/
+    └── coat/                  # self-contained COAT copy (no internet needed)
+        ├── activation/real_quantization/   # Triton FP8 kernels
+        ├── optimizer/fp8_adamw.py          # CoatAdamW
+        └── utils/                         # QuantizationConfig, FP8Manager, …
+```
 
-
-## Quickstart 
-
-Create a conda environment and install dependencies (we recommend Python 3.11):
+## Setup
 
 ```bash
-conda create -n env python=3.11
-conda activate env
+pip install --upgrade pip setuptools
+
+export PATH=/usr/local/cuda-13.0/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH
+
+pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu130
+
+https://mjunya.com/flash-attention-prebuild-wheels/
+pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu130torch2.9-cp311-cp311-linux_x86_64.whl
+
+python -r requirements.txt
+
+в third_party/coat/optimizer/kernels
+pip install --no-build-isolation -e .
 ```
 
-```bash
-pip install -r requirements.txt
-```
+## Credits
 
-Reproduce Quartet II sweeps in SLURM:
-```bash
-cd scripts
-sbatch quartetv2_sweep.sh
-```
-
-Inspect the scheme implementation at:
-```
-[quartet_2.py](./src/models/quantization/schemes/quartet_2.py)
-```
-
-## NVFP4 Kernels
-
-We provide the kernels tuned for RTX 5090 (`sm120a`) in `./kernels`. They require CUDA 12.8 or newer and close to latest (~`2.9.0`) pytorch. Install them with
-
-```bash
-cd kernels
-pip install --no-build-isolation .
-```
-
-You can then use the provided drop-in NVFP4 `nn.Linear` replacement as follows:
-```python
-from quartet2.linear import Quartet_II_linear
-
-linear = Quartet_II_linear(
-    in_dim,
-    out_dim,
-    device="cuda",
-    dtype=torch.bfloat16,
-)
-...
-```
-
-You can further benchmark the kernels agains BF16, FP8 and [Quartet](https://arxiv.org/abs/2505.14669) with
-
-```bash
-cd test
-pythpn bench_linear.py
-```
-
-
-
-
-## Cite This Work
-
-```
-@misc{panferov2026quartetiiaccuratellm,
-      title={Quartet II: Accurate LLM Pre-Training in NVFP4 by Improved Unbiased Gradient Estimation}, 
-      author={Andrei Panferov and Erik Schultheis and Soroush Tabesh and Dan Alistarh},
-      year={2026},
-      eprint={2601.22813},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2601.22813}, 
-}
-```
+- [COAT: Compressing Optimizer states and Activation for Memory-Efficient FP8 Training](https://arxiv.org/abs/2410.19313) — Dettmers et al., 2024
+- Quartet-II — training infrastructure baseline

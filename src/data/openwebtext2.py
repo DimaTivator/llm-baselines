@@ -7,7 +7,7 @@ from datasets import load_dataset
 
 tknzr = tiktoken.get_encoding("gpt2")
 
-
+# DEFUNKT -- no longer available
 def get_openwebtext2_data(datasets_base_dir, num_proc=40):
     """https://openwebtext2.readthedocs.io/en/latest/"""
     OWT2_DATA_PATH = os.path.join(datasets_base_dir, "openwebtext2/")

@@ -1,14 +1,20 @@
 import argparse
 import json
+import sys
+import os
 from pathlib import Path
 import random
-import os
-import schedulefree
 
 import numpy as np
 import torch
-# torch._dynamo.config.compiled_autograd = True
 import wandb
+
+# Add src/ to path so all modules resolve correctly when running from project root
+_SRC = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_SRC)
+for _p in [_SRC, _ROOT]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import config
 from data.utils import DataReader, get_dataset
@@ -26,7 +32,6 @@ def main(args):
     if args.full_eval_at is None:
         args.full_eval_at = []
 
-    # NOTE args.seed is offset per worker in get_adjusted_args_for_process
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     torch.manual_seed(args.seed)
@@ -34,10 +39,35 @@ def main(args):
     np.random.seed(args.seed)
     if "cuda" in args.device:
         torch.cuda.set_device(torch.device(args.device))
-    # torch.use_deterministic_algorithms(True)  # CUBLAS_WORKSPACE_CONFIG=:4096:8
 
+    # ── FP8 setup ────────────────────────────────────────────────────────────
+    args.qargs = None
+    if args.fp8 or args.fp8_optim:
+        import sys as _sys
+        _sys.path.insert(0, _ROOT)  # ensure third_party is findable
+        from third_party.coat.utils._fp8_quantization_config import QuantizationConfig
+        args.qargs = QuantizationConfig(
+            quantize_model="coat_real" if args.fp8 else "none",
+            fabit=args.fp8_fabit,
+            fwbit=args.fp8_fwbit,
+            fobit=args.fp8_fobit,
+            babit=args.fp8_babit,
+            bwbit=args.fp8_bwbit,
+            bobit=args.fp8_bobit,
+            group_size=args.fp8_group_size,
+            weight_memory_efficient=args.fp8_weight_memory_efficient,
+            first_order_expansion=args.fp8_expansion,
+            second_order_expansion=args.fp8_expansion,
+            first_order_bit=args.fp8_first_order_bit,
+            second_order_bit=args.fp8_second_order_bit,
+            qgroup_size=args.fp8_qgroup_size,
+        )
+        if distributed_backend.is_master_process():
+            print(f"\nFP8 QuantizationConfig:\n{args.qargs}\n")
+
+    # ── Experiment naming / WandB ─────────────────────────────────────────
     exp_name = get_exp_name(args, distributed_backend)
-    exp_dir = Path(args.results_base_folder) / exp_name
+    exp_dir  = Path(args.results_base_folder) / exp_name
     if distributed_backend.is_master_process() and args.wandb:
         wandb.init(
             project=args.wandb_project,
@@ -46,8 +76,8 @@ def main(args):
         )
         wandb.define_metric("iter")
         wandb.define_metric("train/*", step_metric="iter")
-        wandb.define_metric("val/*", step_metric="iter")
-        wandb.define_metric("lr", step_metric="iter")
+        wandb.define_metric("val/*",   step_metric="iter")
+        wandb.define_metric("lr",      step_metric="iter")
 
     print(f"Starting Experiment: {exp_name}")
     print(f"Experiment Directory: {exp_dir}")
@@ -57,7 +87,6 @@ def main(args):
     datareaders = get_data_readers(args)
 
     model = get_model(args).to(args.device)
-    # TODO: take care of initializing the model if args.use_pretrained != 'none'
     print(f"\nModel:\n{model}")
 
     model = distributed_backend.transform_model(model)
@@ -74,24 +103,24 @@ def main(args):
         g["params"] = params
         optimized_params_cnt += sum([p.numel() for p in g["params"]])
     params_cnt = distributed_backend.get_raw_model(model).get_num_params()
-    nonemb_param_cnt = (
-        params_cnt
-        - distributed_backend.get_raw_model(model).lm_head.weight.numel()
-        - distributed_backend.get_raw_model(model).transformer.wte.weight.numel()
-    )
     print("number of parameters: %.2fM" % (params_cnt / 1e6,))
     print("number of optimized parameters: %.2fM" % (optimized_params_cnt / 1e6,))
-    print("number of non-embedding parameters: %.2fM" % (nonemb_param_cnt / 1e6,))
     if args.wandb and distributed_backend.is_master_process():
-        wandb.log(
-            {
-                "parameters": params_cnt,
-                "optimized_parameters": optimized_params_cnt,
-                "non_embedding_parameters": nonemb_param_cnt,
-            }
-        )
+        wandb.log({"parameters": params_cnt, "optimized_parameters": optimized_params_cnt})
 
-    if args.opt == "adamw":
+    # ── Optimiser ─────────────────────────────────────────────────────────
+    if args.opt == "coat_adamw":
+        from third_party.coat.optimizer.fp8_adamw import CoatAdamW
+        if args.qargs is None:
+            raise ValueError("coat_adamw requires --fp8-optim (which builds qargs).")
+        opt = CoatAdamW(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            qargs=args.qargs,
+        )
+    elif args.opt == "adamw":
         opt = torch.optim.AdamW(
             group_specs,
             lr=args.lr,
@@ -99,6 +128,7 @@ def main(args):
             weight_decay=args.weight_decay,
         )
     elif args.opt == "SFAdamW":
+        import schedulefree
         opt = schedulefree.AdamWScheduleFree(
             group_specs,
             lr=args.lr,
@@ -106,18 +136,15 @@ def main(args):
             weight_decay=args.weight_decay,
             warmup_steps=args.warmup_steps,
         )
-
     else:
-        opt = torch.optim.SGD(
-            group_specs, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay
-        )
+        opt = torch.optim.SGD(group_specs, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+
     print(f"\nOptimizer:\n{opt}")
 
+    # ── LR scheduler ──────────────────────────────────────────────────────
     if args.scheduler != "none":
         assert args.warmup_steps < args.iterations, "Warmup steps must be < iterations."
         if args.scheduler in ["cos", "linear"]:
-            # initial lr is args.lr / div_factor
-            # final lr is initial_lr/final_div_factor = args.lr / div_factor / final_div_factor
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 optimizer=opt,
                 max_lr=[group.get("lr", args.lr) for group in group_specs],
@@ -143,29 +170,28 @@ def main(args):
                 n_warmup=args.warmup_steps,
                 fract_decay=args.wsd_fract_decay,
                 init_div_factor=1e2,
-                final_lr_factor=args.wsd_final_lr_scale,  # should be 0 here
+                final_lr_factor=args.wsd_final_lr_scale,
                 decay_type=args.decay_type,
             )
             scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
         else:
-            raise NotImplementedError(f"Unknown scheduler type: {args.scheduler}.")
+            raise NotImplementedError(f"Unknown scheduler: {args.scheduler}.")
     else:
         scheduler = None
 
+    # ── Auto-resume ───────────────────────────────────────────────────────
     if (exp_dir / "ckpts" / "latest" / "main.pt").exists():
         if not args.auto_resume:
             raise ValueError(
-                f"The experiment dir {exp_dir} already exists. "
-                + "To resume training, set auto_resume=True. "
-                + "Otherwise, specify a different experiment name. "
+                f"Experiment dir {exp_dir} already exists. "
+                "Set --auto-resume to resume, or use a different --experiment-name."
             )
         else:
-            # Auto resume overwrites resume_from
             args.resume_from = str(exp_dir / "ckpts" / "latest")
-
     elif distributed_backend.is_master_process():
         exp_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Train ─────────────────────────────────────────────────────────────
     stats = train(
         model=model,
         opt=opt,
@@ -176,6 +202,8 @@ def main(args):
         cfg=args,
     )
 
+    # We don't need to save such complex structure as it's fields are already in args
+    del args.qargs
     stats["args"] = vars(args)
     if distributed_backend.is_master_process():
         with open(exp_dir / "summary.json", "w") as fs:
@@ -188,21 +216,18 @@ def get_args():
     parser.add_argument(
         "--config_format", default="base", choices=config.registered_formats()
     )
-
     args, rem_args = parser.parse_known_args()
-
     return config.parse_args_with_format(
         format=args.config_format, base_parser=parser, args=rem_args, namespace=args
     )
 
 
 def get_exp_name(args, distributed_backend):
-    """Returns the name of the experiment, used for saving models and wandb."""
+    """Returns the name of the experiment (used for saving checkpoints and WandB)."""
     if args.experiment_name is not None:
         return args.experiment_name
 
     rank = distributed_backend.rank
-
     exp_name = (
         f"{args.dataset}_{args.model}_nlayers{args.n_layer}"
         f"_nhead{args.n_head}_lr{args.lr}"
@@ -211,32 +236,18 @@ def get_exp_name(args, distributed_backend):
         f"_iter{args.iterations}"
         f"_bs{args.batch_size}x{args.acc_steps}_ws{args.world_size}"
     )
-    # for mup
-    if args.model == "mup_noam":
-        exp_name = (
-            f"{args.dataset}_{args.model}"
-            f"_opt{args.opt}"
-            f"_nlayers{args.n_layer}"
-            # f"_nhead{args.n_head}"
-            f"_lr{args.lr}"
-            f"_sched_{args.scheduler}"
-            f"_decay_{args.decay_type}"
-            # f"_warmup{args.warmup_steps}"
-            f"_iter{args.iterations}"
-            f"_init{args.init_std}_sce{args.scale_emb}"
-            f"_scd{args.scale_depth}"
-            # f"_bs{args.batch_size}x{args.acc_steps}_ws{args.world_size}"
-        )
+    if args.fp8:
+        exp_name += "_fp8act"
+    if args.fp8_optim:
+        exp_name += "_fp8opt"
     if args.wandb_run_prefix != "none":
         exp_name = args.wandb_run_prefix + "_" + exp_name
     exp_name += f"_seed{args.seed - rank}"
     exp_name += f"_data_seed{args.data_seed}"
-
     if args.weight_average:
-        exp_name += f"_WA"
+        exp_name += "_WA"
     if args.opt == "SFAdamW":
-        exp_name += f"_beta1_{args.beta1}"
-        exp_name += f"_beta2_{args.beta2}"
+        exp_name += f"_beta1_{args.beta1}_beta2_{args.beta2}"
     return exp_name
 
 
@@ -257,18 +268,13 @@ def get_data_readers(args, verbose=True):
         sequence_length=args.sequence_length,
         seed=args.data_seed,
         with_replacement=False,
-        auto_shard=False,  # NOTE Identical Per Rank
+        auto_shard=False,  # identical per rank for consistent eval
         keep_in_ram=args.data_in_ram,
     )
-
     if verbose:
         print(f"Num training tokens: {train_reader.num_tokens}")
         print(f"Num validation tokens: {val_reader.num_tokens}")
-
-    return {
-        "train": train_reader,
-        "val": val_reader,
-    }
+    return {"train": train_reader, "val": val_reader}
 
 
 if __name__ == "__main__":

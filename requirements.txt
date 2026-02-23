@@ -1,10 +1,17 @@
+# Core
+torch>=2.4.1
+triton>=3.1.0
+
+# Tokenization / data
 tiktoken
-torch=>=2.9.0
-tqdm==4.67.1
-fast-hadamard-transform
-schedulefree
-transformers
-wandb
+transformers>=4.45.2
 datasets
 zstandard
+
+# Training utilities
+tqdm
+schedulefree
 scipy
+
+# Logging
+wandb

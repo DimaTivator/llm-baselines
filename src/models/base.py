@@ -14,8 +14,6 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from .quantization import build_quantized_linear, QuantizedLinear, Quartet_II_Linear, NvidiaLinear
-
 
 class LayerNorm(nn.Module):
     """LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False"""
@@ -34,19 +32,9 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = build_quantized_linear(
-            config.n_embd,
-            3 * config.n_embd,
-            bias=config.bias,
-            config=config,
-        )
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
-        self.c_proj = build_quantized_linear(
-            config.n_embd,
-            config.n_embd,
-            bias=config.bias,
-            config=config,
-        )
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -111,17 +99,15 @@ class MLP(nn.Module):
         super().__init__()
         self.dim_exp_factor = exp_factor * 4
 
-        self.c_fc = build_quantized_linear(
+        self.c_fc = nn.Linear(
             config.n_embd,
             int(self.dim_exp_factor * config.n_embd),
             bias=config.bias,
-            config=config,
         )
-        self.c_proj = build_quantized_linear(
+        self.c_proj = nn.Linear(
             int(self.dim_exp_factor * config.n_embd),
             config.n_embd,
             bias=config.bias,
-            config=config,
         )
         self.dropout = nn.Dropout(config.dropout)
         self.activation = nn.GELU()
@@ -177,10 +163,6 @@ class GPTBase(nn.Module):
         )
 
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
         self.transformer.wte.weight = (
             self.lm_head.weight
         )  # https://paperswithcode.com/method/weight-tying
@@ -232,12 +214,6 @@ class GPTBase(nn.Module):
         )  # position embeddings of shape (1, t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
 
-        # router logits is a list for each layer's routing, each of shape (b * seq_len, n_experts)
-        router_logits = []
-        # experts is a list for each layer's selected experts, shape (b * seq_len, topk)
-        experts = []
-
-        # forward pass through all the transformer blocks
         for block in self.transformer.h:
             x, logits_and_experts = block(x)
         x = self.transformer.ln_f(x)
@@ -248,7 +224,6 @@ class GPTBase(nn.Module):
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
             )
-
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(
@@ -263,8 +238,6 @@ class GPTBase(nn.Module):
 
     def crop_sequence_length(self, sequence_length):
         # model surgery to decrease the block size if necessary
-        # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
-        # but want to use a smaller block size for some smaller, simpler model
         assert sequence_length <= self.config.sequence_length
         self.config.sequence_length = sequence_length
         self.transformer.wpe.weight = nn.Parameter(
@@ -273,20 +246,14 @@ class GPTBase(nn.Module):
         for block in self.transformer.h:
             block.attn.bias = block.attn.bias[:, :, :sequence_length, :sequence_length]
 
-    def from_pretrained(
-        self,
-        model_path,
-    ):
+    def from_pretrained(self, model_path):
         paths = model_path.split(",")
         if len(paths) == 1:
-            # TODO: with distributed?
             loaded_state = torch.load(
                 str(model_path + "/ckpt.pt"),
                 map_location=torch.device(self.config.device),
             )
             state_to_load = loaded_state["model"]
-
-            # load the sparse model
             state_to_load = {
                 ".".join(k.split(".")[1:]): v  # drop _orig_mod from keys
                 for k, v in state_to_load.items()
@@ -294,63 +261,39 @@ class GPTBase(nn.Module):
 
     def get_parameter_group_specs(self):
         """
-        This long function is unfortunately doing something very simple and is being very defensive:
-        We are separating out all parameters of the model into two buckets: those that will experience
-        weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
-        We are then returning the PyTorch optimizer object.
+        Separate parameters into weight-decayed and non-decayed groups.
+        Linear weights are decayed; biases, norms, and embeddings are not.
         """
-
-        # separate out all parameters to those that will and won't experience regularizing weight decay
         decay = set()
         no_decay = set()
-        whitelist_weight_modules = (
-            torch.nn.Linear,
-            QuantizedLinear,
-            Quartet_II_Linear,
-            NvidiaLinear,
-        )
-        # need to do import here to avoid circular import (since llama imports from base here)
+        whitelist_weight_modules = (torch.nn.Linear,)
         from .utils import BLACKLIST_WEIGHT_MODULES
 
         for mn, m in self.named_modules():
             for pn, p in m.named_parameters():
-                fpn = "%s.%s" % (mn, pn) if mn else pn  # full param name
-                # random note: because named_modules and named_parameters are recursive
-                # we will see the same tensors p many many times. but doing it this way
-                # allows us to know which parent module any tensor p belongs to...
+                fpn = "%s.%s" % (mn, pn) if mn else pn
                 if pn.endswith("bias"):
-                    # all biases will not be decayed
                     no_decay.add(fpn)
                 elif pn.endswith("weight") and isinstance(m, whitelist_weight_modules):
-                    # weights of whitelist modules will be weight decayed
                     decay.add(fpn)
                 elif pn.endswith("weight") and isinstance(m, BLACKLIST_WEIGHT_MODULES):
-                    # weights of blacklist modules will NOT be weight decayed
                     no_decay.add(fpn)
 
-        # subtle: 'transformer.wte.weight' and 'lm_head.weight' are tied, so they
-        # will appear in the no_decay and decay sets respectively after the above.
-        # In addition, because named_parameters() doesn't return duplicates, it
-        # will only return the first occurence, key'd by 'transformer.wte.weight', below.
-        # so let's manually remove 'lm_head.weight' from decay set. This will include
-        # this tensor into optimization via transformer.wte.weight only, and not decayed.
-        decay.remove("lm_head.weight")
+        # lm_head.weight is tied to wte.weight; exclude from decay
+        decay.discard("lm_head.weight")
         no_decay.add("lm_head.weight")
 
-        # validate that we considered every parameter
         param_dict = {pn: p for pn, p in self.named_parameters()}
         inter_params = decay & no_decay
         union_params = decay | no_decay
-        assert (
-            len(inter_params) == 0
-        ), "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
-        assert (
-            len(param_dict.keys() - union_params) == 0
-        ), "parameters %s were not separated into either decay/no_decay set!" % (
-            str(param_dict.keys() - union_params),
+        assert len(inter_params) == 0, (
+            "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
+        )
+        assert len(param_dict.keys() - union_params) == 0, (
+            "parameters %s were not separated into either decay/no_decay set!"
+            % (str(param_dict.keys() - union_params),)
         )
 
-        # create the pytorch optimizer object
         return [
             {"params": sorted(list(decay))},
             {"params": sorted(list(no_decay)), "weight_decay": 0.0},
@@ -361,28 +304,20 @@ class GPTBase(nn.Module):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
-        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
         for _ in range(max_new_tokens):
-            # if the sequence context is growing too long we must crop it at sequence_length
             idx_cond = (
                 idx
                 if idx.size(1) <= self.config.sequence_length
                 else idx[:, -self.config.sequence_length :]
             )
-            # forward the model to get the logits for the index in the sequence
             logits = self(idx_cond, get_logits=True)["logits"]
-            # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
-            # optionally crop the logits to only the top k options
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float("Inf")
-            # apply softmax to convert logits to (normalized) probabilities
             probs = F.softmax(logits, dim=-1)
-            # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
-            # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx

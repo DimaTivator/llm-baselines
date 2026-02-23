@@ -1,6 +1,6 @@
 """
-Llama style Language Model that is
-compilable (avoids torch complex)
+Llama style Language Model that is compilable (avoids torch complex).
+BF16 baseline — uses plain nn.Linear throughout.
 """
 
 import math
@@ -11,16 +11,13 @@ import torch.nn as nn
 from torch.nn import functional as F
 from models.base import CausalSelfAttention, GPTBase
 
-from .quantization import build_quantized_linear
-
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-    t = torch.arange(end, device=freqs.device)  # type: ignore
-    freqs = torch.outer(t, freqs).float()  # type: ignore
+    t = torch.arange(end, device=freqs.device)
+    freqs = torch.outer(t, freqs).float()
     cos_freqs = torch.cos(freqs)
     sin_freqs = torch.sin(freqs)
-    # Stack the cos and sin parts in the last dimension to simulate complex numbers
     return torch.stack((cos_freqs, sin_freqs), dim=-1)
 
 
@@ -32,7 +29,6 @@ def _reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor) -> torch.Te
     ndim = x.ndim
     assert 1 < ndim
     assert freqs_cis.shape[:-1] == (x.shape[1], x.shape[-2])
-    # New shape for broadcasting
     shape = [
         1 if i != 1 and i != ndim - 2 else d for i, d in enumerate(x.shape[:-1])
     ] + [2]
@@ -48,13 +44,11 @@ def apply_rotary_emb(q, k, freqs_cis):
 
     freqs_cis = _reshape_for_broadcast(freqs_cis, q)
 
-    # Perform manual "complex" multiplication
     q_cos = q[..., 0] * freqs_cis[..., 0] - q[..., 1] * freqs_cis[..., 1]
     q_sin = q[..., 0] * freqs_cis[..., 1] + q[..., 1] * freqs_cis[..., 0]
     k_cos = k[..., 0] * freqs_cis[..., 0] - k[..., 1] * freqs_cis[..., 1]
     k_sin = k[..., 0] * freqs_cis[..., 1] + k[..., 1] * freqs_cis[..., 0]
 
-    # Combine the results back into the interleaved format expected by q and k
     q_out = torch.stack((q_cos, q_sin), dim=-1).reshape(q.shape).flatten(3)
     k_out = torch.stack((k_cos, k_sin), dim=-1).reshape(k.shape).flatten(3)
 
@@ -86,18 +80,8 @@ class LlamaMLP(nn.Module):
         )
         self.hidden_dim = hidden_dim
 
-        self.w12 = build_quantized_linear(
-            config.n_embd,
-            hidden_dim * 2,
-            bias=False,
-            config=config,
-        )
-        self.c_proj = build_quantized_linear(
-            hidden_dim,
-            config.n_embd,
-            bias=False,
-            config=config,
-        )
+        self.w12 = nn.Linear(config.n_embd, hidden_dim * 2, bias=False)
+        self.c_proj = nn.Linear(hidden_dim, config.n_embd, bias=False)
 
     def forward(self, x):
         up, gate = self.w12(x).split(self.hidden_dim, dim=-1)
@@ -107,43 +91,28 @@ class LlamaMLP(nn.Module):
 class LlamaAttention(CausalSelfAttention):
 
     def forward(self, x, freqs_cis):
-        # batch size, sequence length, embedding dimensionality (n_embd)
-        (
-            B,
-            T,
-            C,
-        ) = x.size()
+        B, T, C = x.size()
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        # (B, T, nh, hs)
         k = k.view(B, T, self.n_head, C // self.n_head)
         q = q.view(B, T, self.n_head, C // self.n_head)
         q, k = apply_rotary_emb(q, k, freqs_cis)
-        # (B, nh, T, hs)
         q, k = q.transpose(1, 2), k.transpose(1, 2)
 
-        # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(
                 q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True
             )
         else:
-            # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
             att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
-            y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = (
-            y.transpose(1, 2).contiguous().view(B, T, C)
-        )  # re-assemble all head outputs side by side
+            y = att @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
 
-        # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y
 
@@ -158,8 +127,7 @@ class LlamaBlock(nn.Module):
 
     def forward(self, x, freqs_cis):
         x = x + self.attn(self.ln_1(x), freqs_cis)
-        x_ = self.mlp(self.ln_2(x))
-        x = x + x_
+        x = x + self.mlp(self.ln_2(x))
         return x
 
 
@@ -171,7 +139,6 @@ class Llama(GPTBase):
         self.config = config
         self.tokenizer = tiktoken.get_encoding("gpt2")
 
-        # create the token and position embeddings
         self.head_dim = config.n_embd // config.n_head
         self.freqs_cis = precompute_freqs_cis(self.head_dim, config.sequence_length)
 
@@ -185,13 +152,6 @@ class Llama(GPTBase):
         )
 
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        # self.transformer.wte.weight = (
-        #     self.lm_head.weight
-        # )  # https://paperswithcode.com/method/weight-tying
 
         # init all weights
         self.apply(self._init_weights)
@@ -203,12 +163,6 @@ class Llama(GPTBase):
                 )
 
     def get_num_params(self, non_embedding=True):
-        """
-        Return the number of parameters in the model.
-        For non-embedding count (default)
-        The token embeddings would too, except due to the parameter sharing these
-        params are actually used as weights in the final layer, so we include them.
-        """
         n_params = sum(p.numel() for p in self.parameters())
         return n_params
 
@@ -218,12 +172,9 @@ class Llama(GPTBase):
         assert (
             t <= self.config.sequence_length
         ), f"Cannot forward sequence of length {t}, block size is only {self.config.sequence_length}"
-        # shape (1, t)
         pos = torch.arange(0, t, dtype=torch.long, device=device)
 
-        # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
-
+        tok_emb = self.transformer.wte(idx)
         x = self.transformer.drop(tok_emb)
         freqs_cis = self.freqs_cis.to(x.device)[pos]
 
@@ -232,16 +183,12 @@ class Llama(GPTBase):
         x = self.transformer.ln_f(x)
 
         if targets is not None:
-            # if we are given some desired targets also calculate the loss
             logits = self.lm_head(x)
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
             )
         else:
-            # inference-time mini-optimization: only forward the lm_head on the very last position
-            logits = self.lm_head(
-                x[:, [-1], :]
-            )  # note: using list [-1] to preserve the time dim
+            logits = self.lm_head(x[:, [-1], :])
             loss = None
 
         logits = logits if get_logits else None
