@@ -22,7 +22,7 @@ fp8-pretrain/
 │   ├── logger/                # WandB + dynamics logger
 │   └── distributed/           # DDP backend abstraction
 └── third_party/
-    └── coat/                  # self-contained COAT copy (no internet needed)
+    └── coat/                  # self-contained COAT copy
         ├── activation/real_quantization/   # Triton FP8 kernels
         ├── optimizer/fp8_adamw.py          # CoatAdamW
         └── utils/                         # QuantizationConfig, FP8Manager, …
@@ -30,24 +30,31 @@ fp8-pretrain/
 
 ## Setup
 
+I tested this on 8xH200 and 8xH100 pods (with a minor differences in commands due to the older cuda version on the latter)
+
 ```bash
 pip install --upgrade pip setuptools
 
+# specify path to cude in case of system not seeing nvcc
+# e.g.
 export PATH=/usr/local/cuda-13.0/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH
 
+# install torch
 pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 
-https://mjunya.com/flash-attention-prebuild-wheels/
+# use https://mjunya.com/flash-attention-prebuild-wheels/ to get an appropriate version of flash-attention package
+
 pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu130torch2.9-cp311-cp311-linux_x86_64.whl
 
 python -r requirements.txt
 
-в third_party/coat/optimizer/kernels
+# COAT:
+# inside third_party/coat/optimizer/kernels
 pip install --no-build-isolation -e .
 ```
 
 ## Credits
 
-- [COAT: Compressing Optimizer states and Activation for Memory-Efficient FP8 Training](https://arxiv.org/abs/2410.19313) — Dettmers et al., 2024
-- Quartet-II — training infrastructure baseline
+- [Quartet-II codebase](https://github.com/IST-DASLab/Quartet-II/) — training infrastructure baseline
+- [COAT: Compressing Optimizer states and Activation for Memory-Efficient FP8 Training](https://arxiv.org/abs/2410.19313) — method itself and training infrastructure baselinee
