@@ -190,6 +190,32 @@ class GPTBase(nn.Module):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
+    @property
+    def num_fwd_flops(self):
+        if not hasattr(self, '_num_fwd_flops'):
+            # Embeddings are lookups in the forward pass, not matmuls — exclude them.
+            n_params_no_emb = sum(
+                p.numel() for name, p in self.named_parameters()
+                if 'wte' not in name and 'wpe' not in name
+            )
+            # 2 FLOPs per MAC, plus 2*2 for Q*K^T and out*V per attention layer
+            self._num_fwd_flops = (
+                2 * n_params_no_emb
+                + self.config.n_layer * 4 * self.config.n_embd * self.config.sequence_length
+            )
+        return self._num_fwd_flops
+
+    @property
+    def num_bck_flops(self):
+        if not hasattr(self, '_num_bck_flops'):
+            n_params = sum(p.numel() for p in self.parameters())
+            # Backward is ~2x forward for weights + ~2x for input grads = 4x params
+            self._num_bck_flops = (
+                4 * n_params
+                + self.config.n_layer * 8 * self.config.n_embd * self.config.sequence_length
+            )
+        return self._num_bck_flops
+
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.init_std)

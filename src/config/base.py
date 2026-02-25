@@ -20,6 +20,8 @@ def parse_args(base_parser, args, namespace):
         choices=distributed.registered_backends(),
     )
     parser.add_argument("--log-interval", default=50, type=int)
+    parser.add_argument("--torch-profiling", action="store_true",
+        help="Profile steps 7-9 with PyTorch profiler and export a Chrome trace to <exp_dir>/profiler/.")
 
     # Checkpointing
     parser.add_argument("--results-base-folder", default="./exps", type=str)

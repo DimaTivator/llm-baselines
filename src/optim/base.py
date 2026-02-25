@@ -108,6 +108,9 @@ def train(
         )
         dlogger.iteration = curr_iter
 
+    raw_model = distributed_backend.get_raw_model(not_compiled_model)
+    flops_per_token = raw_model.num_fwd_flops + raw_model.num_bck_flops
+
     substep = curr_iter * cfg.acc_steps
     train_reader, val_reader = datareaders["train"], datareaders["val"]
     train_reader.set_step(substep)
@@ -119,6 +122,32 @@ def train(
         pbar = tqdm(total=cfg.iterations, desc="Training Progress", position=curr_iter)
     else:
         pbar = None
+
+    if cfg.torch_profiling and distributed_backend.is_master_process():
+        from torch.profiler import ProfilerActivity, schedule
+
+        profiler_dir = exp_dir / "profiler"
+
+        def _on_trace_ready(p):
+            profiler_dir.mkdir(exist_ok=True)
+            print(p.key_averages().table(sort_by="self_cuda_time_total", row_limit=32))
+            trace_path = profiler_dir / f"step{p.step_num}.chrome_trace.json.gz"
+            p.export_chrome_trace(str(trace_path))
+            print(f"[profiler] Chrome trace saved to {trace_path}")
+
+        _torch_profiler = torch.profiler.profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=schedule(wait=1, warmup=5, active=3, repeat=1),
+            on_trace_ready=_on_trace_ready,
+            record_shapes=False,
+            profile_memory=False,
+            with_stack=True,
+        )
+    else:
+        import contextlib
+        _torch_profiler = contextlib.nullcontext()
+
+    _prof = _torch_profiler.__enter__()
 
     # MEMORY_BENCH: lists that accumulate one entry per measurement point
     if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
@@ -335,6 +364,7 @@ def train(
             )
 
             if cfg.wandb:
+                consumed_tokens = curr_iter * ws * cfg.acc_steps * cfg.batch_size * cfg.sequence_length
                 wandb.log(
                     {
                         "iter": curr_iter,
@@ -342,13 +372,19 @@ def train(
                         "train/perplexity": 2.71828**train_loss,
                         "lr": current_lrs[0],
                         "iter_dt": dt,
-                        "consumed_tokens": curr_iter * ws * cfg.acc_steps * cfg.batch_size * cfg.sequence_length,
+                        "consumed_tokens": consumed_tokens,
+                        "throughput/total_training_gflops": flops_per_token * consumed_tokens / 1e9,
                         "tok_gpu_sec": cfg.sequence_length * cfg.batch_size * cfg.acc_steps / dt,
                         "grad_norm": grad_norm,
                         "memory/peak_allocated_gb": peak_mem_gb,
                         "memory/reserved_gb": reserved_mem_gb,
                     }
                 )
+
+        if _prof is not None:
+            _prof.step()
+
+    _torch_profiler.__exit__(None, None, None)
     return stats
 
 
