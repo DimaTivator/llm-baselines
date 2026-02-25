@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# train_llama_1024_cos_bf16.sh  —  BF16 baseline, 1024-wide Llama, cosine LR.
-#
-# Architecture: 12L / 1024D / 8H  (head_dim=128, same as Quartet-II 100M)
-#   Same depth as train_llama_bf16.sh but wider embedding dimension.
-#   multiple_of=256 → hidden_dim = 2816
-#
-# LR schedule: cosine with 10% warmup (same as train_llama_cos_bf16.sh).
-#
-# Usage:
-#   bash scripts/train_llama_1024_cos_bf16.sh [NUM_GPUS]
-
 set -euo pipefail
 
 NGPUS=${1:-1}
@@ -17,17 +6,16 @@ DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 RESULTS_DIR=${RESULTS_DIR:-"./exps"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain"}
 
-# ─── Model (12L / 1024D / 8H) ────────────────────────────────────────────────
+# ─── Model ──────────────────────────────
 N_LAYER=12
 N_EMBD=1024
 N_HEAD=8
 SEQ_LEN=1024
-MULTIPLE_OF=256   # hidden_dim = 2816
+MULTIPLE_OF=256
 
-# ─── Training ─────────────────────────────────────────────────────────────────
-# Chinchilla-optimal for 1 GPU (5.142B tokens, 65536 tokens/step)
+# ─── Training ───────────────────────────
 ITERATIONS=80000
-WARMUP=8000          # 10% of total iterations
+WARMUP=8000
 BATCH_SIZE=16
 ACC_STEPS=4
 LR=3e-4
@@ -41,7 +29,7 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --datasets-dir "${DATASETS_DIR}" \
     --sequence-length ${SEQ_LEN} \
     \
-    --model llama \
+    --model fp8_llama \
     --n-layer ${N_LAYER} \
     --n-embd  ${N_EMBD} \
     --n-head  ${N_HEAD} \
@@ -61,6 +49,13 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     \
     --batch-size ${BATCH_SIZE} \
     --acc-steps ${ACC_STEPS} \
+    \
+    --fp8 \
+    --fp8-fabit E4M3 \
+    --fp8-fwbit E4M3 \
+    --fp8-babit E5M2 \
+    --fp8-bwbit E5M2 \
+    --fp8-group-size 16 \
     \
     --eval-interval 500 \
     --eval-batches 32 \
