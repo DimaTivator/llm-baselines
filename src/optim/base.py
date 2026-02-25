@@ -182,7 +182,7 @@ def train(
             or curr_iter == cfg.iterations
             or (curr_iter in cfg.full_eval_at)
         ):
-            eval_and_log(
+            eval_result = eval_and_log(
                 curr_iter,
                 epoch,
                 model,
@@ -193,6 +193,11 @@ def train(
                 opt,
                 full_eval=(curr_iter in cfg.full_eval_at),
             )
+            if eval_result is not None:
+                val_loss, val_pp, val_acc = eval_result
+                stats["val_loss"].append(val_loss)
+                stats["val_pp"].append(val_pp)
+                stats["val_acc"].append(val_acc)
 
             if curr_iter > cfg.wa_interval and cfg.weight_average:
                 eval_wa(
@@ -350,6 +355,7 @@ def train(
             and distributed_backend.is_master_process()  # Only log on master rank
         ):
             train_loss = loss.detach().cpu().item() * cfg.acc_steps
+            stats["train_loss"].append(train_loss)
 
             current_lrs = [param_group["lr"] for param_group in opt.param_groups]
 
@@ -401,7 +407,7 @@ def eval_and_log(
 ):
     if not distributed_backend.is_master_process():
         # Only evaluate and log on master rank
-        return
+        return None
 
     model.eval()
     if cfg.opt == "SFAdamW":
@@ -465,3 +471,4 @@ def eval_and_log(
             # why a copy? see github.com/wandb/wandb/issues/2981
             wandb.log({f"generated-text-{wandb.run.name}": copy.copy(text_table)})
     model.train()
+    return val_loss, val_perplexity, val_acc
