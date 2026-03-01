@@ -95,7 +95,7 @@ class LinearOptimState3bit(TorchAOBaseTensor):
 
 # in pre-2.4, calling .to(device, dtype) will not dispatch aten._to_copy.default when
 # dtype is the same but device is different. thus, we must override .to() method instead.
-if not torch_version_at_least("2.4"):
+if not torch_version_at_least("2.4.0"):
 
     def _to(self, *args, **kwargs):
         # ignore other args/kwargs
@@ -248,7 +248,7 @@ def _(func, types, args, kwargs):
     return LinearOptimState3bit(codes, scale, x.qmap.clone(), x.signed, shape)
 
 
-if torch_version_at_least("2.5"):
+if torch_version_at_least("2.5.0"):
     from torch.serialization import add_safe_globals
 
     add_safe_globals([LinearOptimState3bit])
