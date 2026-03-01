@@ -41,7 +41,7 @@ def get_dataset(args) -> Dict[str, np.ndarray]:
     if args.dataset == "slimpajama":
         return get_slimpajama_data(args.datasets_dir)
     if args.dataset == "c4":
-        return get_c4_data(args.datasets_dir, 128)
+        return get_c4_data(args.datasets_dir, args, 128)
     else:
         raise NotImplementedError(f"Unknow dataset key '{args.dataset}'")
 

@@ -22,6 +22,7 @@ import distributed
 from models.utils import get_model
 from optim.base import train
 from optim.utils import cos_inf_schedule, wsd_schedule
+from optim.optimization import get_optimizer
 
 
 def main(args):
@@ -136,8 +137,10 @@ def main(args):
             weight_decay=args.weight_decay,
             warmup_steps=args.warmup_steps,
         )
-    else:
+    elif args.opt == "sgd":
         opt = torch.optim.SGD(group_specs, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    else:
+        opt = get_optimizer(group_specs, args, qargs=args.qargs)  # Passes qargs, currently not implemented
 
     print(f"\nOptimizer:\n{opt}")
 

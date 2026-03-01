@@ -3,16 +3,32 @@ import numpy as np
 from transformers import AutoTokenizer
 from datasets import load_dataset
 import os
+import glob
 
 
 hf_tknzr = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
 
 
-def get_c4_data(datasets_dir, num_proc=40):
-    C4_DATA_PATH = os.path.join(datasets_dir, "c4/")
+def get_c4_data(datasets_dir, args, num_proc=40):
+    if args.local_data and args.local_data_path:
+        C4_DATA_PATH = args.local_data_path
+        print(f"Using local C4 data path: {C4_DATA_PATH}")
+    else:
+        C4_DATA_PATH = os.path.join(datasets_dir, "c4/")
+        print(f"Using default C4 data path: {C4_DATA_PATH}")
+
     if not os.path.exists(os.path.join(C4_DATA_PATH, "train.bin")):
         os.makedirs(C4_DATA_PATH, exist_ok=True)
-        dataset = load_dataset("allenai/c4", "en")
+
+        if args.local_data and args.local_data_path:
+            # Load local .json.gz shards
+            data_files = glob.glob(os.path.join(C4_DATA_PATH, "c4-train.*.json.gz"))
+            if not data_files:
+                raise ValueError(f"No C4 .json.gz files found in {C4_DATA_PATH}. Ensure it contains shards like c4-train.00000-of-01024.json.gz.")
+            dataset = load_dataset("json", data_files={"train": data_files})
+        else:
+            # Download from Hub
+            dataset = load_dataset("allenai/c4", "en")
 
         split_dataset = dataset["train"].train_test_split(
             test_size=0.0005, seed=2357, shuffle=True

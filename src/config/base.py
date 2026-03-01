@@ -63,7 +63,14 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument(
         "--opt",
         default="adamw",
-        choices=["adamw", "sgd", "SFAdamW", "coat_adamw"],
+        choices=[
+            "adamw", "sgd", "SFAdamW", "coat_adamw",
+            "galore_adamw", "coord_adamw", "block_adamw", "adalayer", "block_adalayer",  # Frugal/Coord/Block
+            "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
+            "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
+            "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
+            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m",  # SOTA
+        ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
     parser.add_argument("--acc-steps", default=4, type=int)
@@ -107,6 +114,8 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--tokenizer", default="gpt2", choices=["gpt2", "mistral"])
     parser.add_argument("--vocab-size", default=50304, type=int)
     parser.add_argument("--data-in-ram", action="store_true")
+    parser.add_argument("--local_data", action="store_true", help="For local debug with C4 samples")
+    parser.add_argument("--local_data_path", type=str, default=None, help="Local path to data folder for local debug with C4")
 
     # Model
     parser.add_argument(
@@ -216,5 +225,59 @@ def parse_args(base_parser, args, namespace):
         choices=["true", "expand", "false"],
         help="Dynamic range expansion mode for optimizer state quantization.",
     )
+
+    # Proj parameters (common to many)
+    parser.add_argument("--proj_params_lr_scale", type=float, default=1.0)
+    parser.add_argument("--update_gap", type=int, default=50)
+    parser.add_argument("--density", type=float, default=0.25)
+    parser.add_argument("--reset_statistics", default=True, action='store_true')
+    parser.add_argument("--inactive_update_rule", type=str, default="sign_sgd", choices=["no", "sgd", "sign_sgd"])
+    parser.add_argument("--inactive_lr_scale", type=float, default=1.0)
+    parser.add_argument("--proj_norms", default=False, action='store_true')
+    parser.add_argument("--proj_embeds", default=False, action='store_true')
+    parser.add_argument("--proj_logits", default=False, action='store_true')
+
+    # Galore parameters
+    parser.add_argument("--proj_side", type=str, default="std", choices=["std", "reverse_std", "right", "left", "full"])
+    parser.add_argument("--proj_type", type=str, default="svd", choices=["svd", "random", "randperm", "power_iteration"])
+
+    # Coord parameters
+    parser.add_argument("--coord_choice", type=str, default="columns", choices=["columns", "rows", "randk"])
+
+    # Block parameters
+    parser.add_argument("--block_order", type=str, default="random", choices=['random', 'ascending', 'descending', 'mirror'])
+
+    # APOLLO parameters
+    parser.add_argument("--apollo_proj", type=str, default="random")  # "random" or "svd"
+    parser.add_argument("--apollo_scale_type", type=str, default="tensor")  # "tensor" or "channel"
+    parser.add_argument("--apollo_scale", type=float, default=1.0)
+    parser.add_argument("--apollo_scale_front", action='store_true')
+
+    # LDAdam parameters
+    parser.add_argument("--ldadam_rho", type=float, default=0.908)
+    parser.add_argument("--ldadam_proj_method", type=str, default="power_iteration")
+    parser.add_argument("--ldadam_error_feedback", default=False, action='store_true')
+
+    # Fira parameters
+    parser.add_argument("--fira_alpha", type=float, default=1.0)
+
+    # Adamem parameters
+    parser.add_argument("--adamem_type", type=str, default="rowwise", choices=['rowwise', 'colwise'])
+    parser.add_argument("--adamem_rms", default=True, action='store_true')
+    parser.add_argument("--adamem_relative_lr", type=float, default=1.0)
+    parser.add_argument("--use_momentum_to_update_variance", default=True, action='store_true')
+    parser.add_argument("--adamem_reduce_op", type=str, default="mean", choices=['mean', 'sum'])
+
+    # Adalayer parameters
+    parser.add_argument("--sqrt_numel", default=True, action='store_true')
+
+    # Projection/Normalization
+    parser.add_argument("--projection_strategy", type=str, default="none", choices=['none', 'normalize', 'hyperball'])  # Note: fixed typo from your source ("hyperbal...")
+
+    # Scheduler additions (from your get_scheduler)
+    parser.add_argument("--scheduler_cycle_length", type=int, default=None)
+    parser.add_argument("--scheduler_min_power", type=int, default=-20)
+    parser.add_argument("--min_lr_ratio", type=float, default=0.1)
+
 
     return parser.parse_args(args, namespace)
