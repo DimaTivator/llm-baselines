@@ -2,8 +2,8 @@
 
 import torch, math
 
-from torchao.prototype.low_bit_optim.subclass_4bit import OptimState4bit
-from torchao.prototype.low_bit_optim.quant_utils import create_dynamic_map
+from torchao.optim.subclass_4bit import OptimState4bit
+from torchao.optim.quant_utils import create_dynamic_map
 from .utils import set_block_size
 
 

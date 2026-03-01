@@ -4,7 +4,7 @@ import math
 
 import torch
 
-from torchao.prototype.low_bit_optim.quant_utils import create_dynamic_map
+from torchao.optim.quant_utils import create_dynamic_map
 from .linear_8bit import LinearOptimState8bit
 from .utils import set_block_size
 

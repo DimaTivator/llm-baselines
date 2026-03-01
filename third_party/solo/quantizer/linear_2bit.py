@@ -12,7 +12,7 @@ from torchao.utils import (
     TorchAOBaseTensor,
 )
 
-from torchao.prototype.low_bit_optim.quant_utils import (
+from torchao.optim.quant_utils import (
     dequant_with_qmap,
     scale_tensor,
 )
