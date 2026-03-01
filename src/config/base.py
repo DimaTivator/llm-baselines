@@ -63,7 +63,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument(
         "--opt",
         default="adamw",
-        choices=["adamw", "sgd", "SFAdamW", "coat_adamw"],
+        choices=["adamw", "sgd", "SFAdamW", "coat_adamw", "solo_adamw"],
     )
     parser.add_argument("--batch-size", default=32, type=int)
     parser.add_argument("--acc-steps", default=4, type=int)
@@ -215,6 +215,28 @@ def parse_args(base_parser, args, namespace):
         default="expand",
         choices=["true", "expand", "false"],
         help="Dynamic range expansion mode for optimizer state quantization.",
+    )
+
+    # ── SOLO low-bit optimizer ───────────────────────────────────────────────
+    parser.add_argument(
+        "--solo-bits",
+        nargs=2, type=int, default=[4, 2],
+        help="Bits for (1st state, 2nd state). Default: 4 2",
+    )
+    parser.add_argument(
+        "--solo-quantizers",
+        nargs=2, type=str, default=["de", "qema"],
+        help="Quantizer for (1st state, 2nd state). Default: de qema",
+    )
+    parser.add_argument(
+        "--solo-block-sizes",
+        nargs=2, type=int, default=[128, 128],
+        help="Block sizes for (1st state, 2nd state). Default: 128 128",
+    )
+    parser.add_argument(
+        "--solo-quantile",
+        type=float, default=0.1,
+        help="Quantile for 2nd state logarithmic quantization. Default: 0.1",
     )
 
     return parser.parse_args(args, namespace)

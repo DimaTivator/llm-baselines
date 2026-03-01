@@ -120,6 +120,18 @@ def main(args):
             weight_decay=args.weight_decay,
             qargs=args.qargs,
         )
+    elif args.opt == "solo_adamw":
+        from third_party.solo.adamw import AdamWQ
+        opt = AdamWQ(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            bits=tuple(args.solo_bits),
+            quantile=args.solo_quantile,
+            block_sizes=tuple(args.solo_block_sizes),
+            quantizers=tuple(args.solo_quantizers),
+        )
     elif args.opt == "adamw":
         opt = torch.optim.AdamW(
             group_specs,
@@ -240,6 +252,8 @@ def get_exp_name(args, distributed_backend):
         exp_name += "_fp8act"
     if args.fp8_optim:
         exp_name += "_fp8opt"
+    if args.opt == "solo_adamw":
+        exp_name += f"_solo{args.solo_bits[0]}b{args.solo_bits[1]}b"
     if args.wandb_run_prefix != "none":
         exp_name = args.wandb_run_prefix + "_" + exp_name
     exp_name += f"_seed{args.seed - rank}"
