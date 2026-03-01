@@ -8,11 +8,8 @@ import torch
 from torch import Tensor
 from torch.utils._python_dispatch import return_and_correct_aliasing
 
-from torchao.utils import (
-    TORCH_VERSION_AT_LEAST_2_4,
-    TORCH_VERSION_AT_LEAST_2_5,
-    TorchAOBaseTensor,
-)
+from torch.ao.utils import torch_version_at_least
+from torchao.utils import TorchAOBaseTensor
 
 from .utils import scale_tensor, quantize_with_alpha, dequant_with_alpha, set_block_size
 
@@ -96,7 +93,7 @@ class QemaOptimState4bit(TorchAOBaseTensor):
 
 # in pre-2.4, calling .to(device, dtype) will not dispatch aten._to_copy.default when
 # dtype is the same but device is different. thus, we must override .to() method instead.
-if not TORCH_VERSION_AT_LEAST_2_4:
+if not torch_version_at_least("2.4"):
 
     def _to(self, *args, **kwargs):
         # ignore other args/kwargs
@@ -254,7 +251,7 @@ def _(func, types, args, kwargs):
     return QemaOptimState4bit(codes, scale, alpha, x.signed, shape, x.quantile)
 
 
-if TORCH_VERSION_AT_LEAST_2_5:
+if torch_version_at_least("2.5"):
     from torch.serialization import add_safe_globals
 
     add_safe_globals([QemaOptimState4bit])
