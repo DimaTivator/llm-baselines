@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 from torch.utils._python_dispatch import return_and_correct_aliasing
 
-from torch.ao.utils import torch_version_at_least
+from torchao.utils import torch_version_at_least
 from torchao.utils import TorchAOBaseTensor
 
 from .utils import scale_tensor, unbiased_quantize_with_alpha, dequant_with_alpha, set_block_size

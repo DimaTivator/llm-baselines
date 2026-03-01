@@ -6,7 +6,7 @@ import torch
 from torch import Tensor
 from torch.utils._python_dispatch import return_and_correct_aliasing
 
-from torch.ao.utils import torch_version_at_least
+from torchao.utils import torch_version_at_least
 from torchao.utils import TorchAOBaseTensor
 
 from torchao.optim.quant_utils import (
