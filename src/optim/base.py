@@ -159,7 +159,7 @@ def train(
 
     while curr_iter <= cfg.iterations:
         # Save permanent checkpoint
-        if cfg.permanent_ckpt_interval > 0:
+        if cfg.permanent_ckpt_interval > 0 and exp_dir is not None:
             if curr_iter % cfg.permanent_ckpt_interval == 0:
                 ckpt_dir = exp_dir / "ckpts" / str(curr_iter)
                 if distributed_backend.is_master_process():
@@ -167,7 +167,7 @@ def train(
                 save_worker_state(ckpt_dir)
 
         # Save temporary checkpoint for resuming training
-        if cfg.latest_ckpt_interval > 0:
+        if cfg.latest_ckpt_interval > 0 and exp_dir is not None:
             if curr_iter % cfg.latest_ckpt_interval == 0 or curr_iter == cfg.iterations:
                 ckpt_dir = exp_dir / "ckpts" / "latest"
                 if distributed_backend.is_master_process():

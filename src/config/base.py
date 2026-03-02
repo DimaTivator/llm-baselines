@@ -321,5 +321,8 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--mars_gamma", type=float, default=0.025)
     parser.add_argument("--mars_type", type=str, default="mars-adamw", choices=["mars-adamw", "mars-lion", "mars-shampoo"])
 
+    # Local Saving
+    parser.add_argument("--no-local-save", action="store_true", help="Disable saving checkpoints and results to local disk.")
+
 
     return parser.parse_args(args, namespace)

@@ -68,7 +68,8 @@ def main(args):
 
     # ── Experiment naming / WandB ─────────────────────────────────────────
     exp_name = get_exp_name(args, distributed_backend)
-    exp_dir  = Path(args.results_base_folder) / exp_name
+    # exp_dir  = Path(args.results_base_folder) / exp_name
+    exp_dir = Path(args.results_base_folder) / exp_name if not args.no_local_save else None
     if distributed_backend.is_master_process() and args.wandb:
         wandb.init(
             project=args.wandb_project,
@@ -183,7 +184,7 @@ def main(args):
         scheduler = None
 
     # ── Auto-resume ───────────────────────────────────────────────────────
-    if (exp_dir / "ckpts" / "latest" / "main.pt").exists():
+    if exp_dir is not None and (exp_dir / "ckpts" / "latest" / "main.pt").exists():
         if not args.auto_resume:
             raise ValueError(
                 f"Experiment dir {exp_dir} already exists. "
@@ -191,7 +192,7 @@ def main(args):
             )
         else:
             args.resume_from = str(exp_dir / "ckpts" / "latest")
-    elif distributed_backend.is_master_process():
+    elif distributed_backend.is_master_process() and exp_dir is not None:
         exp_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Train ─────────────────────────────────────────────────────────────
@@ -208,7 +209,7 @@ def main(args):
     # We don't need to save such complex structure as it's fields are already in args
     del args.qargs
     stats["args"] = vars(args)
-    if distributed_backend.is_master_process():
+    if distributed_backend.is_master_process() and exp_dir is not None:
         with open(exp_dir / "summary.json", "w") as fs:
             json.dump(stats, fs)
     distributed_backend.finalize()
