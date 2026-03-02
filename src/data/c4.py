@@ -10,25 +10,61 @@ hf_tknzr = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
 
 
 def get_c4_data(datasets_dir, args, num_proc=40):
-    if args.local_data and args.local_data_path:
+    if "INPUT_PATH" in os.environ:
+        C4_DATA_PATH = os.environ["INPUT_PATH"]
+        use_input_path = True
+        print(f"Using INPUT_PATH environment variable: {C4_DATA_PATH}")
+    elif args.local_data and args.local_data_path:
         C4_DATA_PATH = args.local_data_path
-        print(f"Using local C4 data path: {C4_DATA_PATH}")
+        use_input_path = False
+        print(f"Using local C4 data path from args: {C4_DATA_PATH}")
     else:
         C4_DATA_PATH = os.path.join(datasets_dir, "c4/")
+        use_input_path = False
         print(f"Using default C4 data path: {C4_DATA_PATH}")
 
-    if not os.path.exists(os.path.join(C4_DATA_PATH, "train.bin")):
+    train_bin_path = os.path.join(C4_DATA_PATH, "train.bin")
+    val_bin_path = os.path.join(C4_DATA_PATH, "val.bin")
+
+    if not os.path.exists(train_bin_path):
         os.makedirs(C4_DATA_PATH, exist_ok=True)
 
-        if args.local_data and args.local_data_path:
-            # Load local .json.gz shards
-            data_files = glob.glob(os.path.join(C4_DATA_PATH, "c4-train.*.json.gz"))
-            if not data_files:
-                raise ValueError(f"No C4 .json.gz files found in {C4_DATA_PATH}. Ensure it contains shards like c4-train.00000-of-01024.json.gz.")
-            dataset = load_dataset("json", data_files={"train": data_files})
+        if use_input_path:
+            all_files = sorted([
+                os.path.join(C4_DATA_PATH, f) 
+                for f in os.listdir(C4_DATA_PATH) 
+                if os.path.isfile(os.path.join(C4_DATA_PATH, f)) and not f.startswith('.')
+            ])
+            if not all_files:
+                raise ValueError(f"No files found in INPUT_PATH: {C4_DATA_PATH}")
+            data_files_list = all_files
+            print(f"Found {len(data_files_list)} files in INPUT_PATH (aliases handled).")
         else:
-            # Download from Hub
-            dataset = load_dataset("allenai/c4", "en")
+            data_files_list = glob.glob(os.path.join(C4_DATA_PATH, "c4-train.*.json.gz"))
+            if not data_files_list:
+                raise ValueError(f"No C4 .json.gz files found in {C4_DATA_PATH}.")
+            print(f"Found {len(data_files_list)} standard C4 shards.")
+
+        dataset = load_dataset("json", data_files={"train": data_files_list})
+    # if args.local_data and args.local_data_path:
+    #     C4_DATA_PATH = args.local_data_path
+    #     print(f"Using local C4 data path: {C4_DATA_PATH}")
+    # else:
+    #     C4_DATA_PATH = os.path.join(datasets_dir, "c4/")
+    #     print(f"Using default C4 data path: {C4_DATA_PATH}")
+
+    # if not os.path.exists(os.path.join(C4_DATA_PATH, "train.bin")):
+    #     os.makedirs(C4_DATA_PATH, exist_ok=True)
+
+    #     if args.local_data and args.local_data_path:
+    #         # Load local .json.gz shards
+    #         data_files = glob.glob(os.path.join(C4_DATA_PATH, "c4-train.*.json.gz"))
+    #         if not data_files:
+    #             raise ValueError(f"No C4 .json.gz files found in {C4_DATA_PATH}. Ensure it contains shards like c4-train.00000-of-01024.json.gz.")
+    #         dataset = load_dataset("json", data_files={"train": data_files})
+    #     else:
+    #         # Download from Hub
+    #         dataset = load_dataset("allenai/c4", "en")
 
         split_dataset = dataset["train"].train_test_split(
             test_size=0.0005, seed=2357, shuffle=True
