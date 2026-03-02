@@ -63,7 +63,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument(
         "--opt",
         default="adamw",
-        choices=["adamw", "sgd", "SFAdamW", "coat_adamw", "solo_adamw"],
+        choices=["adamw", "sgd", "SFAdamW", "coat_adamw", "solo_adamw", "solo_triton_adamw"],
     )
     parser.add_argument("--batch-size", default=32, type=int)
     parser.add_argument("--acc-steps", default=4, type=int)
