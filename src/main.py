@@ -140,7 +140,7 @@ def main(args):
     elif args.opt == "sgd":
         opt = torch.optim.SGD(group_specs, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     else:
-        opt = get_optimizer(group_specs, args, qargs=args.qargs)  # Passes qargs, currently not implemented
+        opt = get_optimizer(group_specs, args, model=model, qargs=args.qargs)  # Passes qargs, currently not implemented
 
     print(f"\nOptimizer:\n{opt}")
 

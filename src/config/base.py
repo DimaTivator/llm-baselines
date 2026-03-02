@@ -69,7 +69,7 @@ def parse_args(base_parser, args, namespace):
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
             "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
-            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m",  # SOTA
+            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  # SOTA
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -278,6 +278,48 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--scheduler_cycle_length", type=int, default=None)
     parser.add_argument("--scheduler_min_power", type=int, default=-20)
     parser.add_argument("--min_lr_ratio", type=float, default=0.1)
+
+    # SOTA and Memory Efficient Optimizer Parameters (from source)
+    parser.add_argument("--momentum", type=float, default=0.95)
+    parser.add_argument("--eps", type=float, default=1e-7)
+    parser.add_argument("--nesterov", default=True, action="store_true")
+    parser.add_argument("--dampening", type=float, default=0)
+    parser.add_argument("--sgd_sign_update", default=False, action="store_true")
+    parser.add_argument("--l_inf", type=float, default=None)
+    parser.add_argument("--d_0", type=float, default=None)
+    parser.add_argument("--lower_bound", type=float, default=None)
+    parser.add_argument("--clamp_level", type=float, default=None)
+    parser.add_argument("--majority_vote", default=False, action="store_true")
+    parser.add_argument("--ademamix_beta3", type=float, default=0.9999)
+    parser.add_argument("--ademamix_alpha", type=float, default=8.0)
+    parser.add_argument("--ademamix_beta3_warmup_steps", type=int, default=None)
+    parser.add_argument("--ademamix_alpha_warmup_steps", type=int, default=None)
+    parser.add_argument("--newton_schulz_func", type=str, choices=['cesista', 'jordan', 'svd', 'express_orig', 'express_modified', '5777_left_1e_3', '5779_left_15e_4'], default="jordan")
+    parser.add_argument("--muon_ns_steps", type=int, default=5)
+    parser.add_argument("--muon_num_splits", type=int, default=1)
+    parser.add_argument("--muon_split_dim", type=int, default=0)
+    parser.add_argument("--muon_headwise", default=False, action="store_true")
+    parser.add_argument("--muon_adjust_lr", type=str, choices=['spectral_norm', 'rms_norm'], default="rms_norm")
+    parser.add_argument("--muon_adamw_lr_scale", type=float, default=1.0)
+    parser.add_argument("--muon_pre_orth_update", type=str, default="default", choices=["default", "ns_adan", "ema"])
+    parser.add_argument("--muon_1d_backup", type=str, default="adamw", choices=["adamw", "adan", "lion"])
+    parser.add_argument("--muon_beta2", type=float, default=0.95)
+    parser.add_argument("--adan_beta1", type=float, default=0.98)
+    parser.add_argument("--adan_beta2", type=float, default=0.92)
+    parser.add_argument("--adan_beta3", type=float, default=0.99)
+    parser.add_argument("--adan_max_grad_norm", type=float, default=0.0)
+    parser.add_argument("--adan_no_prox", default=False, action="store_true")
+    parser.add_argument("--log_update_rmsnorm", default=False, action="store_true")
+    parser.add_argument("--nadam_momentum_decay", type=float, default=0.004)
+    parser.add_argument("--adopt_beta1", type=float, default=0.9)
+    parser.add_argument("--adopt_beta2", type=float, default=0.999)
+    parser.add_argument("--adopt_decouple", default=False, action="store_true")
+    parser.add_argument("--shampoo_beta", type=float, default=0.99)
+    parser.add_argument("--soap_precondition_embed_debed", default=True, action="store_true")
+    parser.add_argument("--mars_beta1", type=float, default=0.95)
+    parser.add_argument("--mars_beta2", type=float, default=0.99)
+    parser.add_argument("--mars_gamma", type=float, default=0.025)
+    parser.add_argument("--mars_type", type=str, default="mars-adamw", choices=["mars-adamw", "mars-lion", "mars-shampoo"])
 
 
     return parser.parse_args(args, namespace)

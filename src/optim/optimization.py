@@ -9,7 +9,7 @@ from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M
 
 def get_optimizer(param_groups, args, model=None, qargs=None):
     
-    optimizer_name = args.optimizer.lower()
+    optimizer_name = args.opt.lower()
     assert optimizer_name != "badam" or model is not None, "BAdam requires model for the initialization."
     if optimizer_name == "adam":
         optimizer = torch.optim.Adam(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)#, foreach=False, fused=False)
