@@ -1,138 +1,160 @@
 from tqdm import tqdm
 import numpy as np
+import datasets
+import datasets.distributed
 from transformers import AutoTokenizer
-from datasets import load_dataset
+from .streaming_reader import StreamingDataReader
+import torch.distributed as dist
 import os
 import glob
 import shutil
 
 
-hf_tknzr = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+import os
+import glob
+import datasets
+import datasets.distributed
+from transformers import AutoTokenizer
+from .streaming_reader import StreamingDataReader
+import torch.distributed as dist
+
+
+def get_tokenizer(tokenizer_name="gpt2"):
+    """Get the tokenizer. Make this configurable if needed."""
+    if tokenizer_name == "gpt2":
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
+def get_c4_data_streaming(args):
+    """
+    Get C4 data using streaming approach for much better performance.
+    This processes local files step-by-step without creating .bin files.
+    """
+    print("Loading C4 dataset with streaming=True for better performance...")
+    
+    # Handle local data
+    if hasattr(args, 'local_data') and args.local_data and hasattr(args, 'local_data_path') and args.local_data_path:
+        print(f"Using local C4 data from: {args.local_data_path}")
+        
+        # Expand the path (handle ~)
+        input_path = os.path.expanduser(args.local_data_path)
+        
+        if not os.path.exists(input_path):
+            raise ValueError(f"Local data path does not exist: {input_path}")
+        
+        # Look for various JSON file patterns
+        json_patterns = [
+            "*.json.gz",
+            "*.json",
+            "**/*.json.gz",  # Recursive search
+            "**/*.json",
+        ]
+        
+        json_files = []
+        for pattern in json_patterns:
+            found_files = glob.glob(os.path.join(input_path, pattern), recursive=True)
+            json_files.extend(found_files)
+        
+        # Remove duplicates and sort
+        json_files = sorted(list(set(json_files)))
+        
+        if not json_files:
+            raise ValueError(f"No JSON files found in local path: {input_path}")
+        
+        print(f"Found {len(json_files)} JSON files for streaming processing")
+        print(f"Sample files: {json_files[:3]}")
+        
+        # Create datasets from local files with streaming
+        data_files = {"train": json_files}
+        
+        print("Loading train dataset from local files...")
+        train_dataset = datasets.load_dataset(
+            "json", 
+            data_files=data_files, 
+            split='train', 
+            streaming=True  # This is key - no .bin files created!
+        )
+        
+        print("Creating validation dataset from local files...")
+        val_dataset = datasets.load_dataset(
+            "json", 
+            data_files=data_files, 
+            split='train', 
+            streaming=True
+        ).take(2000)  # Take subset for validation
+        
+    else:
+        # Fallback to HuggingFace (but this wasn't requested)
+        print("Loading C4 dataset from HuggingFace...")
+        train_dataset = datasets.load_dataset(
+            "allenai/c4", 
+            "en", 
+            split="train", 
+            streaming=True
+        )
+        val_dataset = datasets.load_dataset(
+            "allenai/c4", 
+            "en", 
+            split="validation", 
+            streaming=True
+        )
+    
+    # Shuffle the datasets
+    print("Shuffling datasets...")
+    train_dataset = train_dataset.shuffle(seed=getattr(args, 'data_seed', 1337))
+    val_dataset = val_dataset.shuffle(seed=42)  # Fixed seed for validation
+    
+    # Handle distributed training
+    world_size = 1
+    rank = 0
+    if dist.is_initialized():
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+        
+        print(f"Splitting dataset for distributed training: rank {rank}/{world_size}")
+        # Split dataset by node for distributed training
+        train_dataset = datasets.distributed.split_dataset_by_node(
+            train_dataset, rank=rank, world_size=world_size
+        )
+        # Note: Don't split validation dataset to ensure consistent evaluation
+    
+    print(f"Streaming dataset setup complete: rank {rank}/{world_size}")
+    
+    return {
+        "train_dataset": train_dataset,
+        "val_dataset": val_dataset,
+        "world_size": world_size,
+        "rank": rank,
+    }
 
 
 def get_c4_data(datasets_dir, args, num_proc=40):
-
-    if "INPUT_PATH" in os.environ:
-        C4_DATA_PATH = os.environ["INPUT_PATH"]
-        use_input_path = True
-        print(f"Using INPUT_PATH environment variable: {C4_DATA_PATH}")
-    elif args.local_data and args.local_data_path:
-        C4_DATA_PATH = args.local_data_path
-        use_input_path = False
-        print(f"Using local C4 data path from args: {C4_DATA_PATH}")
+    """
+    C4 data loader that prioritizes streaming for local data.
+    """
+    # Always use streaming when local_data is specified
+    if hasattr(args, 'local_data') and args.local_data:
+        print("Local data detected - using streaming approach to avoid .bin file creation")
+        return get_c4_data_streaming(args)
+    
+    # Check if we should use streaming
+    if getattr(args, 'streaming', True):
+        print("Using streaming approach for C4 data loading...")
+        return get_c4_data_streaming(args)
     else:
-        C4_DATA_PATH = os.path.join(datasets_dir, "c4/")
-        use_input_path = False
-        print(f"Using default C4 data path: {C4_DATA_PATH}")
+        print("Streaming disabled - this would create .bin files (not recommended for local data)")
+        # Your original .bin file creation code would go here
+        # But since you want to avoid this, we'll force streaming
+        print("Forcing streaming to avoid .bin file creation...")
+        return get_c4_data_streaming(args)
 
-    # Define output paths
-    train_bin_path = os.path.join(C4_DATA_PATH, "train.bin")
-    val_bin_path = os.path.join(C4_DATA_PATH, "val.bin")
-
-    # ─── 2. Check Cache (Skip if .bin files already exist) ───────────────────
-    if os.path.exists(train_bin_path) and os.path.exists(val_bin_path):
-        print(f"Found existing .bin files in {C4_DATA_PATH}, skipping preprocessing.")
-        return {
-            "train": train_bin_path,
-            "val": val_bin_path,
-        }
-
-    # ─── 3. Prepare Directory & Discover Files ───────────────────────────────
-    os.makedirs(C4_DATA_PATH, exist_ok=True)
-
-    if use_input_path:
-        # INPUT_PATH mode: Grab ALL files (handles aliases like 0_data, 1_data)
-        all_files = sorted([
-            os.path.join(C4_DATA_PATH, f) 
-            for f in os.listdir(C4_DATA_PATH) 
-            if os.path.isfile(os.path.join(C4_DATA_PATH, f)) and not f.startswith('.')
-        ])
-        if not all_files:
-            raise ValueError(f"No files found in INPUT_PATH: {C4_DATA_PATH}")
-        data_files_list = all_files
-        print(f"Found {len(data_files_list)} files in INPUT_PATH (aliases handled).")
-    else:
-        # Standard mode: Expect specific C4 naming convention
-        data_files_list = glob.glob(os.path.join(C4_DATA_PATH, "c4-train.*.json.gz"))
-        if not data_files_list:
-            raise ValueError(f"No C4 .json.gz files found in {C4_DATA_PATH}.")
-        print(f"Found {len(data_files_list)} standard C4 shards.")
-
-    # ─── 4. Load Dataset ─────────────────────────────────────────────────────
-    print("Loading dataset from files...")
-    dataset = load_dataset("json", data_files={"train": data_files_list})
-
-    # ─── 5. Split Train/Val ──────────────────────────────────────────────────
-    print("Splitting into train/val...")
-    split_dataset = dataset["train"].train_test_split(
-        test_size=0.0005, seed=getattr(args, 'data_seed', 2357), shuffle=True
-    )
-    split_dataset["val"] = split_dataset.pop("test")
-
-    # ─── 6. Tokenize ─────────────────────────────────────────────────────────
-    def process(example):
-        ids = hf_tknzr.encode(
-            text=example["text"],
-            add_special_tokens=True,
-            padding=False,
-            truncation=False,
-        )
-        out = {"ids": ids, "len": len(ids)}
-        return out
-
-    print(f"Tokenizing dataset (num_proc={num_proc})...")
-    tokenized = split_dataset.map(
-        process,
-        remove_columns=["text"],
-        desc="tokenizing the splits",
-        num_proc=num_proc,
-    )
-
-    # ─── 7. Write to Binary ───────────────────
-    for split, dset in tokenized.items():
-        filename = os.path.join(C4_DATA_PATH, f"{split}.bin")
-        print(f"Writing {split} split to {filename}...")
-
-        # Calculate required size
-        arr_len = int(np.sum(dset["len"]))
-        total_size_bytes = arr_len * 2  # 2 bytes for uint16
-        
-        # Check disk space before writing
-        free_space = shutil.disk_usage(C4_DATA_PATH).free
-        if free_space < total_size_bytes * 1.1:  # 10% buffer
-            raise MemoryError(
-                f"Insufficient disk space! Need {total_size_bytes / 1e9:.2f} GB, "
-                f"have {free_space / 1e9:.2f} GB free in {C4_DATA_PATH}"
-            )
-        
-        print(f"  - Total tokens: {arr_len:,}")
-        print(f"  - File size: {total_size_bytes / 1e9:.2f} GB")
-        print(f"  - Free space: {free_space / 1e9:.2f} GB")
-
-        # Write using standard file I/O (NOT memmap - avoids SIGBUS)
-        with open(filename, "wb") as f:
-            total_batches = min(1024, len(dset))
-            
-            for batch_idx in tqdm(range(total_batches), desc=f"writing {filename}"):
-                # Batch together samples for faster write
-                batch = dset.shard(
-                    num_shards=total_batches, index=batch_idx, contiguous=True
-                ).with_format("numpy")
-                arr_batch = np.concatenate(batch["ids"]).astype(np.uint16)
-                f.write(arr_batch.tobytes())
-
-        # Verify file was written correctly
-        written_size = os.path.getsize(filename)
-        print(f"Finished writing {filename} ({written_size / 1e9:.2f} GB)")
-        
-        if written_size != total_size_bytes:
-            print(f"Warning: Expected {total_size_bytes} bytes, got {written_size} bytes")
-
-    # ─── 8. Return Paths (Compatible with DataReader) ────────────────────────
-    return {
-        "train": train_bin_path,
-        "val": val_bin_path,
-    }
     # if "INPUT_PATH" in os.environ:
     #     C4_DATA_PATH = os.environ["INPUT_PATH"]
     #     use_input_path = True

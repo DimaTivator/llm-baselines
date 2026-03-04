@@ -1,8 +1,9 @@
 from pathlib import Path
 import numpy as np
-from typing import Dict
+from typing import Dict, Union
 import torch
 import torch.distributed as dist
+from transformers import AutoTokenizer
 
 from .shakespeare import get_shakespeare_data
 from .wikitext import get_wikitext_data
@@ -13,11 +14,45 @@ from .slimpajama import get_slimpajama_data
 from .c4 import get_c4_data
 
 
-def get_dataset(args) -> Dict[str, np.ndarray]:
-    """Fetch the right dataset given by the args.dataset parameter. The logic for each dataset is
-    contained in its own python file. The expected format at the moment is a dictionary of np.memmap
-    containing two keys: 'train' and 'val', corresponding to the tokenized training and validation data.
-    """
+def get_tokenizer(args):
+    """Get the appropriate tokenizer based on args."""
+    tokenizer_name = getattr(args, 'tokenizer', 'gpt2')
+    
+    if tokenizer_name == "gpt2":
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    elif tokenizer_name == "mistral":
+        tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    else:
+        # Default tokenizer
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    
+    # Set model max length
+    max_length = getattr(args, 'max_length', None) or getattr(args, 'sequence_length', 1024)
+    tokenizer.model_max_length = max_length
+    
+    print(f"Using tokenizer: {tokenizer_name}")
+    print(f"Vocabulary size: {len(tokenizer)}")
+    print(f"Max length: {max_length}")
+    print(f"Pad token: {tokenizer.pad_token} (ID: {tokenizer.pad_token_id})")
+    
+    return tokenizer
+
+
+
+def get_dataset(args) -> Union[Dict[str, np.ndarray], Dict[str, any]]:
+    """Fetch the right dataset given by the args.dataset parameter."""
+    
+    # Handle streaming datasets
+    if getattr(args, 'streaming', True) and args.dataset == "c4":
+        return get_c4_data(args.datasets_dir, args)
+    
+    # Traditional datasets (your existing code)
     if args.dataset == "wikitext":
         return get_wikitext_data(args.datasets_dir)
     if args.dataset == "shakespeare-char":
@@ -43,7 +78,7 @@ def get_dataset(args) -> Dict[str, np.ndarray]:
     if args.dataset == "c4":
         return get_c4_data(args.datasets_dir, args, 128)
     else:
-        raise NotImplementedError(f"Unknow dataset key '{args.dataset}'")
+        raise NotImplementedError(f"Unknown dataset key '{args.dataset}'")
 
 
 class DataReader:
@@ -116,7 +151,7 @@ class DataReader:
         data = self._get_data()
         x = torch.from_numpy(data[idx : idx + self.sequence_length].astype(np.int64))
         y = torch.from_numpy(
-            data[idx + 1 : idx + self.sequence_length + 1].astype(torch.int64)
+            data[idx + 1 : idx + self.sequence_length + 1].astype(np.int64)
         )
         return x, y
 
@@ -154,9 +189,7 @@ class DataReader:
         # Shift all sequences in this epoch by this amount:
         self.epoch_offset = rng.integers(self.sequence_length)
         self.last_epoch = epoch
-        self.num_batches_of_seqlen = (
-            len(self.order) // self.batch_size
-        )  # Drops remainder batch
+        self.num_batches_of_seqlen = len(self.order) // self.batch_size
 
     def _sample_without_replacement(self, step):
         # Return an array of token indices of length self.batch_size

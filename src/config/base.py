@@ -324,5 +324,10 @@ def parse_args(base_parser, args, namespace):
     # Local Saving
     parser.add_argument("--no-local-save", action="store_true", help="Disable saving checkpoints and results to local disk.")
 
+    # Streaming
+    parser.add_argument("--workers", type=int, default=8, help="Number of dataloader workers")
+    parser.add_argument("--streaming", default=True, action="store_true", help="Use streaming datasets")
+    parser.add_argument("--no-streaming", dest="streaming", action="store_false", help="Disable streaming datasets")
+
 
     return parser.parse_args(args, namespace)

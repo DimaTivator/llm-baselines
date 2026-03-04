@@ -17,12 +17,14 @@ for _p in [_SRC, _ROOT]:
         sys.path.insert(0, _p)
 
 import config
-from data.utils import DataReader, get_dataset
+from data.utils import DataReader, get_dataset, get_tokenizer
 import distributed
 from models.utils import get_model
 from optim.base import train
 from optim.utils import cos_inf_schedule, wsd_schedule
 from optim.optimization import get_optimizer
+
+from data.streaming_reader import StreamingDataReader
 
 
 def main(args):
@@ -256,29 +258,92 @@ def get_exp_name(args, distributed_backend):
 
 
 def get_data_readers(args, verbose=True):
+    """Get data readers, supporting both streaming and traditional approaches."""
+    
+    # Set max_length if not provided
+    if not hasattr(args, 'max_length') or args.max_length is None:
+        args.max_length = args.sequence_length
+    
+    # Set eval_batch_size if not provided
+    if not hasattr(args, 'eval_batch_size') or args.eval_batch_size is None:
+        args.eval_batch_size = args.batch_size
+    
+    # Set workers if not provided
+    if not hasattr(args, 'workers'):
+        args.workers = 8
+    
     data_srcs = get_dataset(args)
-    train_reader = DataReader(
-        data_src=data_srcs["train"],
-        batch_size=args.batch_size,
-        sequence_length=args.sequence_length,
-        seed=args.data_seed,
-        with_replacement=False,
-        auto_shard=True,
-        keep_in_ram=args.data_in_ram,
-    )
-    val_reader = DataReader(
-        data_src=data_srcs["val"],
-        batch_size=args.batch_size,
-        sequence_length=args.sequence_length,
-        seed=args.data_seed,
-        with_replacement=False,
-        auto_shard=False,  # identical per rank for consistent eval
-        keep_in_ram=args.data_in_ram,
-    )
-    if verbose:
-        print(f"Num training tokens: {train_reader.num_tokens}")
-        print(f"Num validation tokens: {val_reader.num_tokens}")
-    return {"train": train_reader, "val": val_reader}
+    
+    # Check if we're using streaming datasets
+    if isinstance(data_srcs, dict) and "train_dataset" in data_srcs:
+        # Streaming approach
+        print("Setting up streaming data readers...")
+        
+        tokenizer = get_tokenizer(args)
+        
+        world_size = data_srcs.get("world_size", 1)
+        rank = data_srcs.get("rank", 0)
+        
+        train_reader = StreamingDataReader(
+            dataset=data_srcs["train_dataset"],
+            tokenizer=tokenizer,
+            batch_size=args.batch_size,
+            max_length=args.max_length,
+            seed=args.data_seed,
+            world_size=world_size,
+            rank=rank,
+            num_workers=args.workers,
+            is_eval=False,
+        )
+        
+        val_reader = StreamingDataReader(
+            dataset=data_srcs["val_dataset"],
+            tokenizer=tokenizer,
+            batch_size=args.eval_batch_size,
+            max_length=args.max_length,
+            seed=args.data_seed,
+            world_size=1,  # Don't shard validation data
+            rank=0,
+            num_workers=args.workers,
+            is_eval=True,
+            eval_batches=args.eval_batches,  # Pass eval_batches parameter
+        )
+        
+        if verbose:
+            print("Using streaming data readers")
+            print(f"Train reader: batch_size={args.batch_size}, max_length={args.max_length}")
+            print(f"Val reader: batch_size={args.eval_batch_size}, max_length={args.max_length}")
+            print(f"Eval batches: {args.eval_batches}")
+        
+        return {"train": train_reader, "val": val_reader}
+    
+    else:
+        # Traditional approach (your existing code)
+        train_reader = DataReader(
+            data_src=data_srcs["train"],
+            batch_size=args.batch_size,
+            sequence_length=args.sequence_length,
+            seed=args.data_seed,
+            with_replacement=False,
+            auto_shard=True,
+            keep_in_ram=args.data_in_ram,
+        )
+        val_reader = DataReader(
+            data_src=data_srcs["val"],
+            batch_size=args.batch_size,
+            sequence_length=args.sequence_length,
+            seed=args.data_seed,
+            with_replacement=False,
+            auto_shard=False,
+            keep_in_ram=args.data_in_ram,
+        )
+        
+        if verbose:
+            print(f"Num training tokens: {train_reader.num_tokens}")
+            print(f"Num validation tokens: {val_reader.num_tokens}")
+        
+        return {"train": train_reader, "val": val_reader}
+
 
 
 if __name__ == "__main__":
