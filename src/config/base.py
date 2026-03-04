@@ -63,7 +63,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument(
         "--opt",
         default="adamw",
-        choices=["adamw", "sgd", "SFAdamW", "coat_adamw", "solo_adamw", "solo_triton_adamw"],
+        choices=["adamw", "sgd", "SFAdamW", "coat_adamw", "solo_adamw", "solo_triton_adamw", "muon", "muonlite"],
     )
     parser.add_argument("--batch-size", default=32, type=int)
     parser.add_argument("--acc-steps", default=4, type=int)
@@ -238,5 +238,21 @@ def parse_args(base_parser, args, namespace):
         type=float, default=0.1,
         help="Quantile for 2nd state logarithmic quantization. Default: 0.1",
     )
+
+    # ── LITE (MuonLite) optimizer ────────────────────────────────────────────
+    parser.add_argument("--lite-beta1", type=float, default=-0.25,
+        help="LITE Hessian damping coefficient β₁ (default: -0.25).")
+    parser.add_argument("--lite-beta2", type=float, default=1.0,
+        help="LITE Hessian damping coefficient β₂ (default: 1.0).")
+    parser.add_argument("--lite-chi", type=float, default=2.0,
+        help="LITE LR amplification χ for Muon blocks (default: 2.0).")
+    parser.add_argument("--lite-chi-adamw", type=float, default=4.0,
+        help="LITE LR amplification χ for emb/norm blocks (default: 4.0).")
+    parser.add_argument("--lite-subspace-ratio", type=float, default=0.1,
+        help="LITE sharp subspace ratio r_s (default: 0.1).")
+    parser.add_argument("--lite-ns-steps", type=int, default=6,
+        help="Newton-Schulz iterations (default: 6).")
+    parser.add_argument("--lite-muon-theta", type=float, default=0.95,
+        help="Muon momentum decay (default: 0.95).")
 
     return parser.parse_args(args, namespace)
