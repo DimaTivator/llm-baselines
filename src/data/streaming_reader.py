@@ -4,6 +4,7 @@ from torch.utils.data import IterableDataset
 from transformers import AutoTokenizer
 from typing import Dict, Any, Iterator
 import math
+import gc
 
 
 class PreprocessedIterableDataset(IterableDataset):
@@ -159,6 +160,12 @@ class StreamingDataReader:
             
             x = input_ids[:, :-1].contiguous()
             y = input_ids[:, 1:].contiguous()
+
+            if self.step % 50 == 0:
+                print("CUDA cache cleanup...")
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             
             return x, y
             
