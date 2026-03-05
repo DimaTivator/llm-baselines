@@ -328,6 +328,7 @@ def parse_args(base_parser, args, namespace):
     # Streaming
     parser.add_argument("--workers", type=int, default=8, help="Number of dataloader workers")
     parser.add_argument("--streaming", default=False, action="store_true", help="Use streaming datasets")
+    parser.add_argument("--empty-cache-freq", type=int, default=32, help="Number of batches to clean up the cache, when streaming")
 
 
     return parser.parse_args(args, namespace)

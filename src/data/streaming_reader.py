@@ -79,6 +79,7 @@ class StreamingDataReader:
         num_workers: int = 8,
         is_eval: bool = False,
         eval_batches: int = 32,
+        empty_cache_freq: int = 32,
     ):
         self.dataset = dataset
         self.tokenizer = tokenizer
@@ -90,6 +91,7 @@ class StreamingDataReader:
         self.num_workers = num_workers
         self.is_eval = is_eval
         self.eval_batches = eval_batches
+        self.empty_cahce_freq = empty_cache_freq
         
         print(f"Setting up StreamingDataReader:")
         print(f"  - is_eval: {is_eval}")
@@ -161,7 +163,7 @@ class StreamingDataReader:
             x = input_ids[:, :-1].contiguous()
             y = input_ids[:, 1:].contiguous()
 
-            if self.step % 50 == 0:
+            if self.step % self.empty_cahce_freq == 0:
                 print("CUDA cache cleanup...")
                 gc.collect()
                 if torch.cuda.is_available():

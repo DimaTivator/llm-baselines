@@ -294,6 +294,7 @@ def get_data_readers(args, verbose=True):
             rank=rank,
             num_workers=args.workers,
             is_eval=False,
+            empty_cache_freq=args.empty_cache_freq,
         )
         
         val_reader = StreamingDataReader(
@@ -307,6 +308,7 @@ def get_data_readers(args, verbose=True):
             num_workers=args.workers,
             is_eval=True,
             eval_batches=args.eval_batches,  # Pass eval_batches parameter
+            empty_cache_freq=args.empty_cache_freq,
         )
         
         if verbose:
