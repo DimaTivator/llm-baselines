@@ -73,6 +73,7 @@ def parse_args(base_parser, args, namespace):
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
+    parser.add_argument("--eval-batch-size", default=32, type=int)
     parser.add_argument("--acc-steps", default=4, type=int)
     parser.add_argument("--weight-decay", default=0.1, type=float)
     parser.add_argument("--beta1", default=0.9, type=float)
@@ -326,8 +327,7 @@ def parse_args(base_parser, args, namespace):
 
     # Streaming
     parser.add_argument("--workers", type=int, default=8, help="Number of dataloader workers")
-    parser.add_argument("--streaming", default=True, action="store_true", help="Use streaming datasets")
-    parser.add_argument("--no-streaming", dest="streaming", action="store_false", help="Disable streaming datasets")
+    parser.add_argument("--streaming", default=False, action="store_true", help="Use streaming datasets")
 
 
     return parser.parse_args(args, namespace)

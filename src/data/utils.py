@@ -48,10 +48,6 @@ def get_tokenizer(args):
 def get_dataset(args) -> Union[Dict[str, np.ndarray], Dict[str, any]]:
     """Fetch the right dataset given by the args.dataset parameter."""
     
-    # Handle streaming datasets
-    if getattr(args, 'streaming', True) and args.dataset == "c4":
-        return get_c4_data(args.datasets_dir, args)
-    
     # Traditional datasets (your existing code)
     if args.dataset == "wikitext":
         return get_wikitext_data(args.datasets_dir)
