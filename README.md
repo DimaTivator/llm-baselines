@@ -18,7 +18,25 @@ fp8-pretrain/
 │   │   ├── llama.py           # BF16 Llama baseline
 │   │   ├── fp8_llama.py       # ← Llama with COAT FP8 ops (main new file)
 │   │   └── utils.py
-│   ├── optim/                 # training loop, LR schedules, weight averaging
+│   ├── optim/
+│   │   ├── __init__.py
+│   │   ├── base.py                 # base optimizer utilities
+│   │   ├── optimization.py         # training loop / optimization logic
+│   │   ├── utils.py                # optimizer helper utilities
+│   │   ├── weight_averaging.py     # EMA / SWA / parameter averaging
+│   │   ├── memory_efficient/       # memory-efficient optimizers
+│   │   │   ├── __init__.py
+│   │   │   ├── apollo/
+│   │   │   ├── fira/
+│   │   │   ├── frugal/
+│   │   │   ├── galore/
+│   │   │   └── ldadam/
+│   │   └── sota_opt/               # state-of-the-art optimizers
+│   │       ├── __init__.py
+│   │       ├── Adan/
+│   │       ├── MARS/
+│   │       ├── dion/
+│   │       └── soap/
 │   ├── logger/                # WandB + dynamics logger
 │   └── distributed/           # DDP backend abstraction
 └── third_party/
