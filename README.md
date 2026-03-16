@@ -47,7 +47,7 @@ pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 
 pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu130torch2.9-cp311-cp311-linux_x86_64.whl
 
-python -r requirements.txt
+pip install -r requirements.txt
 
 # COAT:
 # inside third_party/coat/optimizer/kernels
