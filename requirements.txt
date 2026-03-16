@@ -13,4 +13,5 @@ scipy
 wandb
 
 # SOLO
-torchao >= 0.7.0
+# (!) depends on the torch version: https://github.com/pytorch/ao/issues/2919
+torchao
