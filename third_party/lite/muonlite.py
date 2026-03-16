@@ -114,32 +114,38 @@ def _beta_scheduler(t, warmup, beta_final, beta_start, T_beta):
 
 
 # Parameter name patterns for block classification
-_ATTN_PATTERNS = ("c_attn", "q_proj", "k_proj", "v_proj", "o_proj", "c_proj.attn")
+# Reference block types: qk, vo, ffn, emb, out, norm
+_QK_PATTERNS = ("c_attn", "q_proj", "k_proj")
+_VO_PATTERNS = ("v_proj", "o_proj")
 _FFN_PATTERNS = ("w12", "gate_proj", "up_proj", "down_proj")
 _EMB_PATTERNS = ("wte", "embed")
 _OUT_PATTERNS = ("lm_head", "head")
 _NORM_PATTERNS = ("ln_", "norm")
+
+# Block types that use Muon (2D), and their flat_mode
+_MUON_BLOCKS = {"qk": 1, "vo": 1, "ffn": 1}
+# Block types that use AdamW (1D/emb/out/norm)
+_ADAMW_BLOCKS = {"emb": 2, "out": 2, "norm": 2}
 
 
 def _classify_param(name):
     """Classify parameter into block type based on name patterns.
 
     Returns (block_type, flat_mode) where:
-    - block_type: 'attn', 'ffn', 'emb', 'out', 'norm', 'vanilla_muon', 'adamw'
+    - block_type: 'qk', 'vo', 'ffn', 'emb', 'out', 'norm', or None
     - flat_mode: 0=no schedule, 1=muon ramp, 2=adamw schedule
     """
     name_lower = name.lower()
 
-    # Check attention patterns — but c_proj can be either attn or ffn
-    # In our llama.py, c_proj in CausalSelfAttention is attn output,
-    # and c_proj in LlamaMLP is the down projection.
-    # The reference handles this by checking module context.
-    # We check: if "attn" or "attention" is in the name alongside c_proj, it's attn.
-    # Otherwise c_proj without attn context goes to ffn.
-    if any(p in name_lower for p in ("c_attn", "q_proj", "k_proj", "v_proj", "o_proj")):
-        return "attn", 1
+    # QK attention (c_attn is combined QKV in llama.py — classify as qk)
+    if any(p in name_lower for p in _QK_PATTERNS):
+        return "qk", 1
+    # VO attention
+    if any(p in name_lower for p in _VO_PATTERNS):
+        return "vo", 1
+    # c_proj in attention context → vo (output projection)
     if "c_proj" in name_lower and ("attn" in name_lower or "attention" in name_lower):
-        return "attn", 1
+        return "vo", 1
 
     if any(p in name_lower for p in _FFN_PATTERNS):
         return "ffn", 1
@@ -179,6 +185,8 @@ class MuonLite(torch.optim.Optimizer):
         chi: float = 2.0,
         chi_adamw: float = 4.0,
         subspace_ratio: float = 0.1,
+        lr_ratio_dict: dict = None,
+        subspace_ratio_dict: dict = None,
         adamw_betas=(0.9, 0.95),
         adamw_eps: float = 1e-8,
         total_steps: int = 10000,
@@ -213,19 +221,30 @@ class MuonLite(torch.optim.Optimizer):
         self.T_f = 0.5
         self.iter = 0
 
+        # Build per-block dicts from simplified params (chi/chi_adamw/subspace_ratio),
+        # then allow explicit per-block overrides via lr_ratio_dict/subspace_ratio_dict.
+        # Block types: qk, vo, ffn (Muon), emb, out, norm (AdamW)
+        lr_dict = dict(qk=chi, vo=chi, ffn=chi, emb=chi_adamw, out=1.0, norm=chi_adamw)
+        sub_dict = dict(qk=subspace_ratio, vo=subspace_ratio, ffn=subspace_ratio,
+                        emb=subspace_ratio, out=1.0, norm=subspace_ratio)
+        if lr_ratio_dict is not None:
+            lr_dict.update(lr_ratio_dict)
+        if subspace_ratio_dict is not None:
+            sub_dict.update(subspace_ratio_dict)
+
         # Classify each parameter into block type and assign LITE settings
         for name, p in muon_params:
             assert p.ndim == 2, f"Muon only supports 2D parameters, got {p.ndim}D for {name}"
             block_type, flat_mode = _classify_param(name)
 
-            if block_type in ("attn", "ffn") and subspace_ratio > 0:
+            if block_type in _MUON_BLOCKS and sub_dict.get(block_type, 0) > 0:
                 # Muon + LITE
                 self.state[p]["use_muon"] = 1
-                self.state[p]["subspace_ratio"] = subspace_ratio
-                self.state[p]["lr_ratio"] = chi
+                self.state[p]["subspace_ratio"] = sub_dict[block_type]
+                self.state[p]["lr_ratio"] = lr_dict[block_type]
                 self.state[p]["flat_warmup"] = flat_mode
             else:
-                # Vanilla Muon (no LITE patterns matched for 2D param)
+                # Vanilla Muon (unrecognized block or LITE disabled for this block)
                 self.state[p]["use_muon"] = 2
                 self.state[p]["subspace_ratio"] = 1.0
                 self.state[p]["lr_ratio"] = 1.0
@@ -238,19 +257,10 @@ class MuonLite(torch.optim.Optimizer):
             self.state[p]["use_muon"] = 0
             self.state[p]["name"] = name
 
-            if block_type == "emb":
-                self.state[p]["subspace_ratio"] = subspace_ratio
-                self.state[p]["lr_ratio"] = chi_adamw
-                self.state[p]["flat_warmup"] = 2
-            elif block_type == "out":
-                # lm_head: no LITE (all sharp)
-                self.state[p]["subspace_ratio"] = 1.0
-                self.state[p]["lr_ratio"] = 1.0
-                self.state[p]["flat_warmup"] = 2
-            elif block_type == "norm":
-                self.state[p]["subspace_ratio"] = subspace_ratio
-                self.state[p]["lr_ratio"] = chi_adamw
-                self.state[p]["flat_warmup"] = 2
+            if block_type in _ADAMW_BLOCKS:
+                self.state[p]["subspace_ratio"] = sub_dict.get(block_type, 1.0)
+                self.state[p]["lr_ratio"] = lr_dict.get(block_type, 1.0)
+                self.state[p]["flat_warmup"] = flat_mode
             else:
                 # Fallback AdamW (no LITE)
                 self.state[p]["subspace_ratio"] = 1.0
