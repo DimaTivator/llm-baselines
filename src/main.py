@@ -208,7 +208,7 @@ def main(args):
         if args.scheduler in ["cos", "linear"]:
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 optimizer=opt,
-                max_lr=[group.get("lr", args.lr) for group in group_specs],
+                max_lr=[group.get("lr", args.lr) for group in opt.param_groups],
                 total_steps=args.iterations,
                 pct_start=args.warmup_steps / args.iterations,
                 anneal_strategy=args.scheduler,
