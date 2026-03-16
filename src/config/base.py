@@ -70,6 +70,7 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  # SOTA
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite"
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -330,5 +331,42 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--streaming", default=False, action="store_true", help="Use streaming datasets")
     parser.add_argument("--empty-cache-freq", type=int, default=32, help="Number of batches to clean up the cache, when streaming")
 
+    # ── SOLO low-bit optimizer ───────────────────────────────────────────────
+    parser.add_argument(
+        "--solo-bits",
+        nargs=2, type=int, default=[4, 2],
+        help="Bits for (1st state, 2nd state). Default: 4 2",
+    )
+    parser.add_argument(
+        "--solo-quantizers",
+        nargs=2, type=str, default=["de", "qema"],
+        help="Quantizer for (1st state, 2nd state). Default: de qema",
+    )
+    parser.add_argument(
+        "--solo-block-sizes",
+        nargs=2, type=int, default=[128, 128],
+        help="Block sizes for (1st state, 2nd state). Default: 128 128",
+    )
+    parser.add_argument(
+        "--solo-quantile",
+        type=float, default=0.1,
+        help="Quantile for 2nd state logarithmic quantization. Default: 0.1",
+    )
+
+    # ── LITE (MuonLite) optimizer ────────────────────────────────────────────
+    parser.add_argument("--lite-beta1", type=float, default=-0.25,
+        help="LITE Hessian damping coefficient β₁ (default: -0.25).")
+    parser.add_argument("--lite-beta2", type=float, default=1.0,
+        help="LITE Hessian damping coefficient β₂ (default: 1.0).")
+    parser.add_argument("--lite-chi", type=float, default=2.0,
+        help="LITE LR amplification χ for Muon blocks (default: 2.0).")
+    parser.add_argument("--lite-chi-adamw", type=float, default=4.0,
+        help="LITE LR amplification χ for emb/norm blocks (default: 4.0).")
+    parser.add_argument("--lite-subspace-ratio", type=float, default=0.1,
+        help="LITE sharp subspace ratio r_s (default: 0.1).")
+    parser.add_argument("--lite-ns-steps", type=int, default=6,
+        help="Newton-Schulz iterations (default: 6).")
+    parser.add_argument("--lite-muon-theta", type=float, default=0.95,
+        help="Muon momentum decay (default: 0.95).")
 
     return parser.parse_args(args, namespace)

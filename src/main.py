@@ -124,6 +124,67 @@ def main(args):
             weight_decay=args.weight_decay,
             qargs=args.qargs,
         )
+    elif args.opt == "solo_adamw":
+        from third_party.solo.adamw import AdamWQ
+        opt = AdamWQ(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            bits=tuple(args.solo_bits),
+            quantile=args.solo_quantile,
+            block_sizes=tuple(args.solo_block_sizes),
+            quantizers=tuple(args.solo_quantizers),
+        )
+    elif args.opt == "solo_triton_adamw":
+        from third_party.solo.triton.adamw import TritonSoloAdamW
+        opt = TritonSoloAdamW(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            quantile=args.solo_quantile,
+            block_size=args.solo_block_sizes[0],
+        )
+    elif args.opt in ("muon", "muonlite"):
+        from third_party.lite.muonlite import MuonLite
+        raw_model = distributed_backend.get_raw_model(model)
+        muon_params = []
+        adamw_params = []
+        for name, p in raw_model.named_parameters():
+            translated = distributed_backend.translate_model_parameter_name_for_node(name)
+            for t_name in translated:
+                t_param = param_name_mapping[t_name]
+                if t_param.ndim == 2 and not any(k in name for k in ("wte", "lm_head", "embed")):
+                    muon_params.append((name, t_param))
+                else:
+                    adamw_params.append((name, t_param))
+        if args.opt == "muonlite":
+            lite_kwargs = dict(
+                beta1=args.lite_beta1, beta2=args.lite_beta2,
+                chi=args.lite_chi, chi_adamw=args.lite_chi_adamw,
+                subspace_ratio=args.lite_subspace_ratio,
+            )
+        else:
+            # Vanilla Muon: disable LITE (no subspace, no amplification, no damping)
+            lite_kwargs = dict(
+                beta1=0.0, beta2=0.0,
+                chi=1.0, chi_adamw=1.0,
+                subspace_ratio=0.0,
+            )
+        opt = MuonLite(
+            muon_params=muon_params,
+            adamw_params=adamw_params,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            ns_steps=args.lite_ns_steps,
+            muon_theta=args.lite_muon_theta,
+            adamw_betas=(args.beta1, args.beta2),
+            adamw_eps=1e-8,
+            total_steps=args.iterations,
+            warmup_steps=args.warmup_steps,
+            **lite_kwargs,
+        )
     elif args.opt == "adamw":
         opt = torch.optim.AdamW(
             group_specs,
@@ -153,7 +214,7 @@ def main(args):
         if args.scheduler in ["cos", "linear"]:
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 optimizer=opt,
-                max_lr=[group.get("lr", args.lr) for group in group_specs],
+                max_lr=[group.get("lr", args.lr) for group in opt.param_groups],
                 total_steps=args.iterations,
                 pct_start=args.warmup_steps / args.iterations,
                 anneal_strategy=args.scheduler,
@@ -246,6 +307,14 @@ def get_exp_name(args, distributed_backend):
         exp_name += "_fp8act"
     if args.fp8_optim:
         exp_name += "_fp8opt"
+    if args.opt == "solo_adamw":
+        exp_name += f"_solo{args.solo_bits[0]}b{args.solo_bits[1]}b"
+    if args.opt == "solo_triton_adamw":
+        exp_name += "_solo_triton_4b2b"
+    if args.opt == "muon":
+        exp_name += "_muon"
+    if args.opt == "muonlite":
+        exp_name += "_muonlite"
     if args.wandb_run_prefix != "none":
         exp_name = args.wandb_run_prefix + "_" + exp_name
     exp_name += f"_seed{args.seed - rank}"

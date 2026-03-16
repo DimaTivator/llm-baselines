@@ -157,6 +157,13 @@ def train(
         _mem_after_step_bwd  = []
         _mem_after_batch     = []
 
+    _time_bench = os.environ.get("TIME_BENCH", "false") in ["1", "True", "true"]
+    if _time_bench:
+        _t_data = []
+        _t_fwd  = []
+        _t_bwd  = []
+        _t_opt  = []
+
     while curr_iter <= cfg.iterations:
         # Save permanent checkpoint
         if cfg.permanent_ckpt_interval > 0 and exp_dir is not None:
@@ -256,8 +263,19 @@ def train(
                 memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
                 assert _mem_before_batch[-1] == memory_usage, "THEY ARE DIFFERENT"
 
+        if _time_bench:
+            _iter_t_data = 0
+            _iter_t_fwd = 0
+            _iter_t_bwd = 0
+
         for microstep_idx in range(cfg.acc_steps):  # gradient accumulation
+            if _time_bench:
+                torch.cuda.synchronize()
+                _tb0 = time.perf_counter_ns()
             x, y = get_batch(train_reader, device=cfg.device)
+            if _time_bench:
+                torch.cuda.synchronize()
+                _tb1 = time.perf_counter_ns()
             # MEMORY_BENCH: Before step forward
             # Content: weights + opt states + grads (from prev microbatches)
             if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
@@ -272,6 +290,10 @@ def train(
                 ):
                     outputs = model(x, targets=y)
 
+            if _time_bench:
+                torch.cuda.synchronize()
+                _tb2 = time.perf_counter_ns()
+
             # MEMORY_BENCH: After step forward
             # Content: weights + opt states + grads (from prev microbatches) + activations
             if os.environ.get("MEMORY_BENCH", "false") in ["1", "True", "true"]:
@@ -282,6 +304,14 @@ def train(
             loss = outputs["loss"] / cfg.acc_steps
             with type_ctx:
                 loss.backward()
+
+            if _time_bench:
+                torch.cuda.synchronize()
+                _tb3 = time.perf_counter_ns()
+                _iter_t_data += _tb1 - _tb0
+                _iter_t_fwd += _tb2 - _tb1
+                _iter_t_bwd += _tb3 - _tb2
+
             substep += 1
 
             # MEMORY_BENCH: After step backward
@@ -307,7 +337,13 @@ def train(
                 memory_usage = torch.cuda.memory_allocated() // 1024 ** 2
                 _mem_after_batch.append(memory_usage)
         
+        if _time_bench:
+            torch.cuda.synchronize()
+            _tb4 = time.perf_counter_ns()
         opt.step()
+        if _time_bench:
+            torch.cuda.synchronize()
+            _tb5 = time.perf_counter_ns()
         scheduler.step()
         opt.zero_grad(set_to_none=True)
         if cfg.weight_average:
@@ -317,6 +353,12 @@ def train(
         if cfg.exponential_moving_average:
             ema.step(not_compiled_model, distributed_backend.is_master_process())
         dt = (time.perf_counter_ns() - t_start) / 1e9
+
+        if _time_bench:
+            _t_data.append(_iter_t_data / 1e6)
+            _t_fwd.append(_iter_t_fwd / 1e6)
+            _t_bwd.append(_iter_t_bwd / 1e6)
+            _t_opt.append((_tb5 - _tb4) / 1e6)
 
         curr_iter += 1
         if distributed_backend.is_master_process():
@@ -346,6 +388,27 @@ def train(
                     f"  Activation Memory: {activation_memory:.1f} MB\n"
                     f"  Optimizer Memory : {optimizer_memory:.1f} MB\n"
                     f"  Gradient Memory  : {gradient_memory:.1f} MB\n"
+                )
+                exit(0)
+
+        if _time_bench:
+            if curr_iter == 10 and distributed_backend.is_master_process():
+                n = len(_t_data) - 1  # 9 iterations (skip iter 0)
+                a_data = sum(_t_data[1:]) / n
+                a_fwd  = sum(_t_fwd[1:]) / n
+                a_bwd  = sum(_t_bwd[1:]) / n
+                a_opt  = sum(_t_opt[1:]) / n
+                a_total = a_data + a_fwd + a_bwd + a_opt
+                print(
+                    f"\n[TIME BENCH] Average per iteration (iters 1-9, iter 0 warmup skipped)\n"
+                    f"  Data Loading  : {a_data:8.2f} ms  ({100*a_data/a_total:5.1f}%)\n"
+                    f"  Forward       : {a_fwd:8.2f} ms  ({100*a_fwd/a_total:5.1f}%)\n"
+                    f"  Backward      : {a_bwd:8.2f} ms  ({100*a_bwd/a_total:5.1f}%)\n"
+                    f"  Optimizer Step: {a_opt:8.2f} ms  ({100*a_opt/a_total:5.1f}%)\n"
+                    f"  -----------------------------------\n"
+                    f"  Total         : {a_total:8.2f} ms\n"
+                    f"\n  Note: Total excludes grad clipping, zero_grad, scheduler,\n"
+                    f"  WA/EMA, and torch.cuda.synchronize() overhead.\n"
                 )
                 exit(0)
 
