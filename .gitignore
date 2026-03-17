@@ -145,3 +145,6 @@ user.yaml
 
 temp/
 *.DS_Store
+
+# debug scripts
+scripts/debug.sh
