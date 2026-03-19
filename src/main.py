@@ -26,6 +26,12 @@ from optim.optimization import get_optimizer
 
 from data.streaming_reader import StreamingDataReader
 
+from dtype_utils.dtypes import (
+    register_activation_hooks,
+    print_model_dtypes,
+    print_memory_usage,
+)
+
 
 def main(args):
     distributed_backend = distributed.make_backend_from_args(args)
@@ -92,6 +98,15 @@ def main(args):
 
     model = get_model(args).to(args.device)
     print(f"\nModel:\n{model}")
+
+    # ── DEBUG ─────────────────────────────────────────────
+    if args.debug_dtype:
+        print_model_dtypes(model, distributed_backend)
+        activation_dtypes = register_activation_hooks(model, distributed_backend)
+
+    else:
+        activation_dtypes = None
+
 
     model = distributed_backend.transform_model(model)
     group_specs = distributed_backend.get_raw_model(model).get_parameter_group_specs()
@@ -208,6 +223,10 @@ def main(args):
 
     print(f"\nOptimizer:\n{opt}")
 
+    # ── DEBUG ────────────────────────────────────
+    if args.debug_dtype:
+        print_memory_usage(distributed_backend, args.device, label="After Init")
+
     # ── LR scheduler ──────────────────────────────────────────────────────
     if args.scheduler != "none":
         assert args.warmup_steps < args.iterations, "Warmup steps must be < iterations."
@@ -267,6 +286,8 @@ def main(args):
         exp_dir=exp_dir,
         distributed_backend=distributed_backend,
         cfg=args,
+        activation_dtypes=activation_dtypes,
+        debug_dtypes=args.debug_dtype,
     )
 
     # We don't need to save such complex structure as it's fields are already in args
