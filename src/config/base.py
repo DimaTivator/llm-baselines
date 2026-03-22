@@ -70,7 +70,9 @@ def parse_args(base_parser, args, namespace):
             "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  # SOTA
-            "solo_adamw", "solo_triton_adamw", "muon", "muonlite"
+            "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
+            "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
+            "loro", "loro_adpt",  # LORO low-rank optimiser
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -259,6 +261,45 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--ldadam_rho", type=float, default=0.908)
     parser.add_argument("--ldadam_proj_method", type=str, default="power_iteration")
     parser.add_argument("--ldadam_error_feedback", default=False, action='store_true')
+
+    # LoRA parameters
+    parser.add_argument("--lora_rank", type=int, default=0,
+        help="LoRA rank. If 0, computed from --density * hidden_size.")
+    parser.add_argument("--lora_alpha", type=float, default=1.0,
+        help="LoRA scaling factor (effective scale = alpha / rank).")
+    parser.add_argument("--lora_base_opt", type=str, default="adamw",
+        choices=["adamw", "adam", "sgd"],
+        help="Base optimizer used inside the LoRA wrapper.")
+
+    # LoRA-Rite parameters
+    parser.add_argument("--lora_rite_clip_grad", type=float, default=1.0,
+        help="LoRA-Rite gradient clipping threshold (0 = off).")
+    parser.add_argument("--lora_rite_update_capping", type=float, default=0.0,
+        help="LoRA-Rite update capping threshold (0 = off).")
+    parser.add_argument("--lora_rite_update_skipping", type=float, default=1.0,
+        help="LoRA-Rite update skipping threshold.")
+    parser.add_argument("--lora_rite_apply_escape", default=False, action="store_true",
+        help="Enable escape mechanism in LoRA-Rite.")
+    parser.add_argument("--lora_rite_balance_param", default=False, action="store_true",
+        help="Balance LoRA factor norms after each LoRA-Rite step.")
+
+    # LORO parameters
+    parser.add_argument("--loro_type", type=str, default="loro",
+        choices=["loro", "eucl"],
+        help="LORO update type: 'loro' (Riemannian) or 'eucl' (Euclidean).")
+    parser.add_argument("--loro_rank", type=int, default=0,
+        help="LORO rank. If 0, computed from --density * n_embd.")
+    parser.add_argument("--loro_init", type=str, default="orth",
+        help="Initialisation for low-rank factors (orth, xavier, kaiming, xavorth, auto, ...).")
+    parser.add_argument("--loro_alpha", type=float, default=1.0,
+        help="Scaling factor for LORO adapter mode (effective scale = alpha / rank).")
+    parser.add_argument("--loro_scope", type=str, default="all",
+        choices=["all", "attn", "mlp"],
+        help="Which sub-modules to replace with low-rank layers.")
+    parser.add_argument("--loro_lr_scaler", type=float, default=-1.0,
+        help="LR scaler for low-rank params. -1 = adaptive r/d.")
+    parser.add_argument("--use_exact_loro", default=False, action="store_true",
+        help="Use exact Riemannian LORO update (more expensive) instead of lazy.")
 
     # Fira parameters
     parser.add_argument("--fira_alpha", type=float, default=1.0)
