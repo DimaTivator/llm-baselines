@@ -9,6 +9,13 @@ import torch
 import wandb
 from tqdm import tqdm
 
+from dtype_utils.dtypes import (
+    print_gradient_dtypes,
+    print_activation_dtypes,
+    print_memory_usage,
+    print_optimizer_dtypes,
+)
+
 from logger.logger import DynamicsLogger
 from optim.weight_averaging import (
     WeightAverager,
@@ -34,6 +41,8 @@ def train(
     exp_dir,
     distributed_backend,
     cfg,
+    activation_dtypes=None,
+    debug_dtypes=False
 ):
     not_compiled_model = model
     if cfg.compile:
@@ -341,6 +350,11 @@ def train(
             torch.cuda.synchronize()
             _tb4 = time.perf_counter_ns()
         opt.step()
+        if debug_dtypes and curr_iter == 1:
+            print_gradient_dtypes(model, distributed_backend)
+            print_optimizer_dtypes(opt, distributed_backend)
+            print_activation_dtypes(activation_dtypes, distributed_backend)
+            print_memory_usage(distributed_backend, cfg.device, label="After Step 1")
         if _time_bench:
             torch.cuda.synchronize()
             _tb5 = time.perf_counter_ns()
