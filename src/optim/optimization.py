@@ -4,6 +4,8 @@ from .memory_efficient.fira import FiraAdamW
 from .memory_efficient.galore import GaLoreAdafactor, AdaMeM
 from .memory_efficient.apollo import APOLLOAdamW
 from .memory_efficient.ldadam import LDAdamW
+from .memory_efficient.lora import LoRAOptimizer
+from .memory_efficient.loro import LOROAdamW
 from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M
 
 
@@ -445,6 +447,55 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             block_order=args.block_order,
             # lion specific
             lr=args.lr, momentum=args.beta1, dampening=args.dampening, weight_decay=args.weight_decay, nesterov=args.nesterov, sign_update=args.sgd_sign_update)
+    elif optimizer_name == "lora":
+        # Resolve base optimizer class
+        lora_base_map = {
+            "adamw": torch.optim.AdamW,
+            "adam": torch.optim.Adam,
+            "sgd": torch.optim.SGD,
+        }
+        base_cls = lora_base_map[args.lora_base_opt]
+
+        for group in param_groups:
+            if group.get("is_proj_params", False):
+                group["rank"] = args.lora_rank if args.lora_rank > 0 else int(args.density * args.n_embd)
+                print("\n" * 3)
+                print("-" * 30)
+                print(f"LoRA Rank: {group['rank']}")
+                print("-" * 30)
+                print("\n" * 3)
+
+        # Build base-optimizer kwargs depending on the chosen base
+        base_kwargs = dict(lr=args.lr, weight_decay=args.weight_decay)
+        if args.lora_base_opt in ("adamw", "adam"):
+            base_kwargs.update(betas=(args.beta1, args.beta2), eps=args.eps)
+        else:  # sgd
+            base_kwargs.update(momentum=args.momentum, dampening=args.dampening, nesterov=args.nesterov)
+
+        optimizer = LoRAOptimizer(
+            param_groups,
+            optimizer_cls=base_cls,
+            rank=args.lora_rank if args.lora_rank > 0 else int(args.density * args.n_embd),
+            lora_alpha=args.lora_alpha,
+            **base_kwargs,
+        )
+    elif optimizer_name in ("loro", "loro_adpt"):
+        # LORO param_groups are already constructed with "type" keys
+        # by get_loro_param_groups() in main.py.  The model reference
+        # is needed for _loro_step() which iterates over LowRank modules.
+        raw_model = model.module if hasattr(model, "module") else model
+        optimizer = LOROAdamW(
+            param_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            correct_bias=True,
+            no_deprecation_warning=True,
+            loro_type=args.loro_type,
+            model=raw_model,
+            use_exact_loro=args.use_exact_loro,
+        )
     elif optimizer_name == "badam":
         raise NotImplementedError
         from badam import BlockOptimizer as BAdamBlockOptimizer

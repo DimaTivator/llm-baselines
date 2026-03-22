@@ -93,19 +93,51 @@ def main(args):
     model = get_model(args).to(args.device)
     print(f"\nModel:\n{model}")
 
+    # ── LORO: replace Linear modules with LowRank *before* DDP ────────
+    if args.opt in ("loro", "loro_adpt"):
+        from optim.memory_efficient.loro.utils import apply_loro
+        loro_mode = "adapter" if args.opt == "loro_adpt" else "lowrank"
+        loro_rank = args.loro_rank if args.loro_rank > 0 else int(args.density * args.n_embd)
+        apply_loro(
+            model,
+            rank=loro_rank,
+            init=args.loro_init,
+            scope=args.loro_scope,
+            mode=loro_mode,
+            alpha=args.loro_alpha,
+            init_range=args.init_std,
+        )
+
     model = distributed_backend.transform_model(model)
-    group_specs = distributed_backend.get_raw_model(model).get_parameter_group_specs()
-    param_name_mapping = {p_name: p for p_name, p in model.named_parameters()}
-    optimized_params_cnt = 0
-    for g in group_specs:
-        params = []
-        for p_name in g["params"]:
-            translated_p_names = (
-                distributed_backend.translate_model_parameter_name_for_node(p_name)
-            )
-            params += [param_name_mapping[p_name] for p_name in translated_p_names]
-        g["params"] = params
-        optimized_params_cnt += sum([p.numel() for p in g["params"]])
+
+    # ── Parameter groups ───────────────────────────────────────────────
+    if args.opt in ("loro", "loro_adpt"):
+        # LORO uses its own param-group structure (type: regular/lowrank_in/lowrank_out)
+        from optim.memory_efficient.loro.utils import get_loro_param_groups
+        loro_mode = "adapter" if args.opt == "loro_adpt" else "lowrank"
+        group_specs = get_loro_param_groups(
+            distributed_backend.get_raw_model(model),
+            lr_scaler=args.loro_lr_scaler,
+            hidden_size=args.n_embd,
+            mode=loro_mode,
+        )
+        optimized_params_cnt = sum(
+            p.numel() for g in group_specs for p in g["params"]
+        )
+    else:
+        group_specs = distributed_backend.get_raw_model(model).get_parameter_group_specs()
+        param_name_mapping = {p_name: p for p_name, p in model.named_parameters()}
+        optimized_params_cnt = 0
+        for g in group_specs:
+            params = []
+            for p_name in g["params"]:
+                translated_p_names = (
+                    distributed_backend.translate_model_parameter_name_for_node(p_name)
+                )
+                params += [param_name_mapping[p_name] for p_name in translated_p_names]
+            g["params"] = params
+            optimized_params_cnt += sum([p.numel() for p in g["params"]])
+
     params_cnt = distributed_backend.get_raw_model(model).get_num_params()
     print("number of parameters: %.2fM" % (params_cnt / 1e6,))
     print("number of optimized parameters: %.2fM" % (optimized_params_cnt / 1e6,))
@@ -184,6 +216,20 @@ def main(args):
             total_steps=args.iterations,
             warmup_steps=args.warmup_steps,
             **lite_kwargs,
+        )
+    elif args.opt in ("loro", "loro_adpt"):
+        from optim.memory_efficient.loro import LOROAdamW
+        opt = LOROAdamW(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            correct_bias=True,
+            no_deprecation_warning=True,
+            loro_type=args.loro_type,
+            model=distributed_backend.get_raw_model(model),
+            use_exact_loro=args.use_exact_loro,
         )
     elif args.opt == "adamw":
         opt = torch.optim.AdamW(
