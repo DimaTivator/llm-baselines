@@ -4,6 +4,7 @@ from .galore import GaLoreAdafactor, AdaMeM
 from .apollo import APOLLOAdamW
 from .ldadam import LDAdamW
 from .lora import LoRAOptimizer
+from .lora_rite import LoRARiteOptimizer
 from .loro import LOROAdamW, apply_loro, get_loro_param_groups
 # from .ldadamw import LDAdamW
 # from .sota_opt import AdEMAMix, DistributedMuon, dion, Adan, RMSpropW, ADOPT, NSAdEMAMix, SOAP, MARS, MARS_M

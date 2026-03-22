@@ -5,6 +5,7 @@ from .memory_efficient.galore import GaLoreAdafactor, AdaMeM
 from .memory_efficient.apollo import APOLLOAdamW
 from .memory_efficient.ldadam import LDAdamW
 from .memory_efficient.lora import LoRAOptimizer
+from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
 from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M
 
@@ -478,6 +479,30 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             rank=args.lora_rank if args.lora_rank > 0 else int(args.density * args.n_embd),
             lora_alpha=args.lora_alpha,
             **base_kwargs,
+        )
+    elif optimizer_name == "lora_rite":
+        for group in param_groups:
+            if group.get("is_proj_params", False):
+                group["rank"] = args.lora_rank if args.lora_rank > 0 else int(args.density * args.n_embd)
+                print("\n" * 3)
+                print("-" * 30)
+                print(f"LoRA-Rite Rank: {group['rank']}")
+                print("-" * 30)
+                print("\n" * 3)
+
+        optimizer = LoRARiteOptimizer(
+            param_groups,
+            rank=args.lora_rank if args.lora_rank > 0 else int(args.density * args.n_embd),
+            lora_alpha=args.lora_alpha,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            clip_unmagnified_grad=args.lora_rite_clip_grad,
+            update_capping=args.lora_rite_update_capping,
+            update_skipping=args.lora_rite_update_skipping,
+            apply_escape=args.lora_rite_apply_escape,
+            balance_param=args.lora_rite_balance_param,
         )
     elif optimizer_name in ("loro", "loro_adpt"):
         # LORO param_groups are already constructed with "type" keys

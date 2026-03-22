@@ -71,7 +71,7 @@ def parse_args(base_parser, args, namespace):
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  # SOTA
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
-            "lora",  # LoRA wrapper
+            "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
         ],
     )
@@ -270,6 +270,18 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--lora_base_opt", type=str, default="adamw",
         choices=["adamw", "adam", "sgd"],
         help="Base optimizer used inside the LoRA wrapper.")
+
+    # LoRA-Rite parameters
+    parser.add_argument("--lora_rite_clip_grad", type=float, default=1.0,
+        help="LoRA-Rite gradient clipping threshold (0 = off).")
+    parser.add_argument("--lora_rite_update_capping", type=float, default=0.0,
+        help="LoRA-Rite update capping threshold (0 = off).")
+    parser.add_argument("--lora_rite_update_skipping", type=float, default=1.0,
+        help="LoRA-Rite update skipping threshold.")
+    parser.add_argument("--lora_rite_apply_escape", default=False, action="store_true",
+        help="Enable escape mechanism in LoRA-Rite.")
+    parser.add_argument("--lora_rite_balance_param", default=False, action="store_true",
+        help="Balance LoRA factor norms after each LoRA-Rite step.")
 
     # LORO parameters
     parser.add_argument("--loro_type", type=str, default="loro",
