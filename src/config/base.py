@@ -34,6 +34,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", default="fp8-pretrain", type=str)
     parser.add_argument("--wandb-run-prefix", default="none", type=str)
+    parser.add_argument("--wandb-group", default=None, type=str)
     parser.add_argument("--eval-seq-prefix", default="none", type=str)
     parser.add_argument("--log-dynamics", action="store_true")
     parser.add_argument(
