@@ -231,6 +231,19 @@ def parse_args(base_parser, args, namespace):
         help="Dynamic range expansion mode for optimizer state quantization.",
     )
 
+    # ── Training Stabilization ───────────────────────────────────────────
+    parser.add_argument(
+        "--qkv-clipping",
+        action="store_true",
+        help="Clamp Q, K, V activations to [-factor, +factor].",
+    )
+    parser.add_argument(
+        "--qkv-clipping-factor",
+        default=1.0,
+        type=float,
+        help="Clipping bound for QKV activations (default 1.0).",
+    )
+
     # Proj parameters (common to many)
     parser.add_argument("--proj_params_lr_scale", type=float, default=1.0)
     parser.add_argument("--update_gap", type=int, default=50)

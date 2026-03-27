@@ -90,10 +90,18 @@ class LlamaMLP(nn.Module):
 
 class LlamaAttention(CausalSelfAttention):
 
+    def __init__(self, config):
+        super().__init__(config)
+        self.qkv_clipping = getattr(config, 'qkv_clipping', False)
+        self.qkv_clipping_factor = getattr(config, 'qkv_clipping_factor', 1.0)
+
     def forward(self, x, freqs_cis):
         B, T, C = x.size()
 
-        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        qkv = self.c_attn(x)
+        if self.qkv_clipping:
+            qkv = qkv.clamp(min=-self.qkv_clipping_factor, max=self.qkv_clipping_factor)
+        q, k, v = qkv.split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head)
         q = q.view(B, T, self.n_head, C // self.n_head)
         q, k = apply_rotary_emb(q, k, freqs_cis)
