@@ -397,11 +397,12 @@ def train(
                 )
                 print(
                     f"\n[MEMORY BENCH] Statistics collected over 10 steps\n"
-                    f"  Total Memory     : {total_memory:.1f} MB\n"
-                    f"  Model Memory     : {model_memory:.1f} MB\n"
-                    f"  Activation Memory: {activation_memory:.1f} MB\n"
-                    f"  Optimizer Memory : {optimizer_memory:.1f} MB\n"
-                    f"  Gradient Memory  : {gradient_memory:.1f} MB\n"
+                    f"  Model Memory     : {model_memory:8.1f} MB  ({100*model_memory/total_memory:5.1f}%)\n"
+                    f"  Activation Memory: {activation_memory:8.1f} MB  ({100*activation_memory/total_memory:5.1f}%)\n"
+                    f"  Optimizer Memory : {optimizer_memory:8.1f} MB  ({100*optimizer_memory/total_memory:5.1f}%)\n"
+                    f"  Gradient Memory  : {gradient_memory:8.1f} MB  ({100*gradient_memory/total_memory:5.1f}%)\n"
+                    f"  -----------------------------------\n"
+                    f"  Total            : {total_memory:8.1f} MB\n"
                 )
                 exit(0)
 
