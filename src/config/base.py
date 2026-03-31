@@ -370,8 +370,7 @@ def parse_args(base_parser, args, namespace):
 
     # Streaming
     parser.add_argument("--workers", type=int, default=8, help="Number of dataloader workers")
-    parser.add_argument("--streaming", default=False, action="store_true", help="Use streaming datasets")
-    parser.add_argument("--empty-cache-freq", type=int, default=32, help="Number of batches to clean up the cache, when streaming")
+    parser.add_argument("--streaming", default=False, action="store_true", help="Use pre-tokenized chunked binary data")
 
     # Debug dtypes
     parser.add_argument("--debug_dtype", default=False, action="store_true", help="Activate Debug prints")

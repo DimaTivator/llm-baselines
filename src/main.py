@@ -7,6 +7,7 @@ import random
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import wandb
 
 # Add src/ to path so all modules resolve correctly when running from project root
@@ -17,14 +18,14 @@ for _p in [_SRC, _ROOT]:
         sys.path.insert(0, _p)
 
 import config
-from data.utils import DataReader, get_dataset, get_tokenizer
+from data.utils import DataReader, get_dataset
 import distributed
 from models.utils import get_model
 from optim.base import train
 from optim.utils import cos_inf_schedule, wsd_schedule
 from optim.optimization import get_optimizer
 
-from data.streaming_reader import StreamingDataReader
+from data.streaming_reader import ChunkedDataReader
 
 from dtype_utils.dtypes import (
     register_activation_hooks,
@@ -395,69 +396,66 @@ def get_exp_name(args, distributed_backend):
 
 
 def get_data_readers(args, verbose=True):
-    """Get data readers, supporting both streaming and traditional approaches."""
-    
-    # Set max_length if not provided
-    if not hasattr(args, 'max_length') or args.max_length is None:
-        args.max_length = args.sequence_length
-    
-    # Set eval_batch_size if not provided
+    """Get data readers, supporting both chunked streaming and traditional approaches."""
+
     if not hasattr(args, 'eval_batch_size') or args.eval_batch_size is None:
         args.eval_batch_size = args.batch_size
-    
-    # Set workers if not provided
+
     if not hasattr(args, 'workers'):
         args.workers = 8
-    
-    data_srcs = get_dataset(args)
-    
-    # Check if we're using streaming datasets
-    if isinstance(data_srcs, dict) and "train_dataset" in data_srcs:
-        # Streaming approach
-        print("Setting up streaming data readers...")
-        
-        tokenizer = get_tokenizer(args)
-        
-        world_size = data_srcs.get("world_size", 1)
-        rank = data_srcs.get("rank", 0)
-        
-        train_reader = StreamingDataReader(
-            dataset=data_srcs["train_dataset"],
-            tokenizer=tokenizer,
+
+    if getattr(args, 'streaming', False):
+        # Dataset-agnostic chunked binary path
+        train_dir = os.path.join(args.datasets_dir, "train")
+        val_dir = os.path.join(args.datasets_dir, "val")
+
+        if not os.path.isdir(train_dir):
+            raise FileNotFoundError(
+                f"Pre-tokenized data not found at {train_dir}. "
+                f"Run: python scripts/prepare_data.py --output_path {train_dir} ..."
+            )
+        if not os.path.isdir(val_dir):
+            raise FileNotFoundError(
+                f"Pre-tokenized validation data not found at {val_dir}. "
+                f"Run: python scripts/prepare_data.py --split validation --output_path {val_dir} ..."
+            )
+
+        dp_rank, dp_world_size = 0, 1
+        if dist.is_initialized():
+            dp_rank = dist.get_rank()
+            dp_world_size = dist.get_world_size()
+
+        train_reader = ChunkedDataReader(
+            data_dir=train_dir,
             batch_size=args.batch_size,
-            max_length=args.max_length,
+            sequence_length=args.sequence_length,
             seed=args.data_seed,
-            world_size=world_size,
-            rank=rank,
             num_workers=args.workers,
             is_eval=False,
-            empty_cache_freq=args.empty_cache_freq,
+            dp_rank=dp_rank,
+            dp_world_size=dp_world_size,
         )
-        
-        val_reader = StreamingDataReader(
-            dataset=data_srcs["val_dataset"],
-            tokenizer=tokenizer,
+        val_reader = ChunkedDataReader(
+            data_dir=val_dir,
             batch_size=args.eval_batch_size,
-            max_length=args.max_length,
+            sequence_length=args.sequence_length,
             seed=args.data_seed,
-            world_size=1,  # Don't shard validation data
-            rank=0,
-            num_workers=args.workers,
+            num_workers=0,
             is_eval=True,
-            eval_batches=args.eval_batches,  # Pass eval_batches parameter
-            empty_cache_freq=args.empty_cache_freq,
+            dp_rank=0,
+            dp_world_size=1,
         )
-        
+
         if verbose:
-            print("Using streaming data readers")
-            print(f"Train reader: batch_size={args.batch_size}, max_length={args.max_length}")
-            print(f"Val reader: batch_size={args.eval_batch_size}, max_length={args.max_length}")
-            print(f"Eval batches: {args.eval_batches}")
-        
+            print(f"Chunked streaming data readers:")
+            print(f"  Train: {train_dir} ({train_reader.num_tokens:,} tokens)")
+            print(f"  Val:   {val_dir} ({val_reader.num_tokens:,} tokens)")
+
         return {"train": train_reader, "val": val_reader}
-    
+
     else:
-        # Traditional approach (your existing code)
+        # Traditional approach
+        data_srcs = get_dataset(args)
         train_reader = DataReader(
             data_src=data_srcs["train"],
             batch_size=args.batch_size,
@@ -476,11 +474,11 @@ def get_data_readers(args, verbose=True):
             auto_shard=False,
             keep_in_ram=args.data_in_ram,
         )
-        
+
         if verbose:
             print(f"Num training tokens: {train_reader.num_tokens}")
             print(f"Num validation tokens: {val_reader.num_tokens}")
-        
+
         return {"train": train_reader, "val": val_reader}
 
 
