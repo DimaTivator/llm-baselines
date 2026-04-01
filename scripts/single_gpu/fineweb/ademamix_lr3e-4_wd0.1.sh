@@ -73,5 +73,4 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --results-base-folder "${RESULTS_DIR}" \
     --wandb \
     --wandb-project "${WANDB_PROJECT}" \
-    --wandb-group "ademamix" \
     --wandb-tags baseline bf16 ademamix
