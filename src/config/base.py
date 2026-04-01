@@ -5,7 +5,8 @@ import json
 def parse_args(base_parser, args, namespace):
     parser = base_parser
     # General training params
-    parser.add_argument("--experiment-name", default=None, type=str)
+    parser.add_argument("--experiment-name", required=True, type=str,
+        help="Short name for this run (e.g. 'adamw-bf16', 'solo-4b2b-fp8'). Used for wandb and checkpoints.")
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--data-seed", default=1337, type=int)
     parser.add_argument("--eval-interval", default=200, type=int)
@@ -33,8 +34,8 @@ def parse_args(base_parser, args, namespace):
     # Logging (WandB)
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", default="fp8-pretrain", type=str)
-    parser.add_argument("--wandb-run-prefix", default="none", type=str)
-    parser.add_argument("--wandb-group", default=None, type=str)
+    parser.add_argument("--wandb-group", default=None, type=str,
+        help="WandB group. Auto-generated from model/data/iterations if not set.")
     parser.add_argument("--eval-seq-prefix", default="none", type=str)
     parser.add_argument("--log-dynamics", action="store_true")
     parser.add_argument(

@@ -75,14 +75,14 @@ def main(args):
             print(f"\nFP8 QuantizationConfig:\n{args.qargs}\n")
 
     # ── Experiment naming / WandB ─────────────────────────────────────────
-    exp_name = get_exp_name(args, distributed_backend)
-    # exp_dir  = Path(args.results_base_folder) / exp_name
-    exp_dir = Path(args.results_base_folder) / exp_name if not args.no_local_save else None
+    exp_name = get_exp_name(args)
+    wandb_group = get_wandb_group(args)
+    exp_dir = Path(args.results_base_folder) / wandb_group / exp_name if not args.no_local_save else None
     if distributed_backend.is_master_process() and args.wandb:
         wandb.init(
             project=args.wandb_project,
             name=exp_name,
-            group=args.wandb_group,
+            group=wandb_group,
             config=vars(args),
         )
         wandb.define_metric("iter")
@@ -357,41 +357,16 @@ def get_args():
     )
 
 
-def get_exp_name(args, distributed_backend):
-    """Returns the name of the experiment (used for saving checkpoints and WandB)."""
-    if args.experiment_name is not None:
-        return args.experiment_name
+def get_exp_name(args):
+    """Returns the experiment run name (from --experiment-name)."""
+    return args.experiment_name
 
-    rank = distributed_backend.rank
-    exp_name = (
-        f"{args.dataset}_{args.model}_nlayers{args.n_layer}"
-        f"_nhead{args.n_head}_lr{args.lr}"
-        f"_sched_{args.scheduler}_warmup{args.warmup_steps}"
-        f"_decay_{args.decay_type}_{args.wsd_fract_decay}"
-        f"_iter{args.iterations}"
-        f"_bs{args.batch_size}x{args.acc_steps}_ws{args.world_size}"
-    )
-    if args.fp8:
-        exp_name += "_fp8act"
-    if args.fp8_optim:
-        exp_name += "_fp8opt"
-    if args.opt == "solo_adamw":
-        exp_name += f"_solo{args.solo_bits[0]}b{args.solo_bits[1]}b"
-    if args.opt == "solo_triton_adamw":
-        exp_name += "_solo_triton_4b2b"
-    if args.opt == "muon":
-        exp_name += "_muon"
-    if args.opt == "muonlite":
-        exp_name += "_muonlite"
-    if args.wandb_run_prefix != "none":
-        exp_name = args.wandb_run_prefix + "_" + exp_name
-    exp_name += f"_seed{args.seed - rank}"
-    exp_name += f"_data_seed{args.data_seed}"
-    if args.weight_average:
-        exp_name += "_WA"
-    if args.opt == "SFAdamW":
-        exp_name += f"_beta1_{args.beta1}_beta2_{args.beta2}"
-    return exp_name
+
+def get_wandb_group(args):
+    """Returns the wandb group: explicit --wandb-group or auto-generated from model/data/iterations."""
+    if args.wandb_group is not None:
+        return args.wandb_group
+    return f"{args.model}-{args.n_layer}L{args.n_head}H_{args.dataset}_{args.iterations // 1000}k"
 
 
 def get_data_readers(args, verbose=True):
