@@ -1,8 +1,9 @@
 from pathlib import Path
 import numpy as np
-from typing import Dict
+from typing import Dict, Union
 import torch
 import torch.distributed as dist
+from transformers import AutoTokenizer
 
 from .shakespeare import get_shakespeare_data
 from .wikitext import get_wikitext_data
@@ -11,9 +12,41 @@ from .openwebtext2 import get_openwebtext2_data
 from .redpajama import get_redpajama_data, get_redpajamav2_data
 from .slimpajama import get_slimpajama_data
 from .c4 import get_c4_data
+from .fineweb import get_fineweb_data
 
 
-def get_dataset(args) -> Dict[str, np.ndarray]:
+def get_tokenizer(args):
+    """Get the appropriate tokenizer based on args."""
+    tokenizer_name = getattr(args, 'tokenizer', 'gpt2')
+    
+    if tokenizer_name == "gpt2":
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    elif tokenizer_name == "mistral":
+        tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    else:
+        # Default tokenizer
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    
+    # Set model max length
+    max_length = getattr(args, 'max_length', None) or getattr(args, 'sequence_length', 1024)
+    tokenizer.model_max_length = max_length
+    
+    print(f"Using tokenizer: {tokenizer_name}")
+    print(f"Vocabulary size: {len(tokenizer)}")
+    print(f"Max length: {max_length}")
+    print(f"Pad token: {tokenizer.pad_token} (ID: {tokenizer.pad_token_id})")
+    
+    return tokenizer
+
+
+
+def get_dataset(args) -> Union[Dict[str, np.ndarray], Dict[str, any]]:
     """Fetch the right dataset given by the args.dataset parameter."""
     
     # Traditional datasets (your existing code)
@@ -41,6 +74,8 @@ def get_dataset(args) -> Dict[str, np.ndarray]:
         return get_slimpajama_data(args.datasets_dir)
     if args.dataset == "c4":
         return get_c4_data(args.datasets_dir, args, 128)
+    if args.dataset in ("fineweb", "fineweb-edu"):
+        return get_fineweb_data(args.datasets_dir, args, 128)
     else:
         raise NotImplementedError(f"Unknown dataset key '{args.dataset}'")
 

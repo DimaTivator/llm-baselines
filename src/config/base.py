@@ -114,6 +114,8 @@ def parse_args(base_parser, args, namespace):
             "slimpajama_chunk1",
             "redpajamav2",
             "c4",
+            "fineweb",
+            "fineweb-edu",
         ],
     )
     parser.add_argument("--tokenizer", default="gpt2", choices=["gpt2", "mistral"])
@@ -370,7 +372,7 @@ def parse_args(base_parser, args, namespace):
 
     # Streaming
     parser.add_argument("--workers", type=int, default=8, help="Number of dataloader workers")
-    parser.add_argument("--streaming", default=False, action="store_true", help="Use pre-tokenized chunked binary data")
+    parser.add_argument("--streaming", default=False, action="store_true", help="Use streaming datasets")
 
     # Debug dtypes
     parser.add_argument("--debug_dtype", default=False, action="store_true", help="Activate Debug prints")
