@@ -24,6 +24,7 @@ WEIGHT_DECAY=0.1
 # ─── Launch ───────────────────────────────────────────────────────────────────
 torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --distributed-backend nccl \
+    --experiment-name "adam_lr5e-4_wd0.1" \
     \
     --dataset fineweb \
     --datasets-dir "${DATASETS_DIR}" \
@@ -42,7 +43,7 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --lr ${LR} \
     --weight-decay ${WEIGHT_DECAY} \
     --beta1 0.9 \
-    --beta2 0.95 \
+    --beta2 0.99 \
     --grad-clip 1.0 \
     \
     --scheduler cos \
