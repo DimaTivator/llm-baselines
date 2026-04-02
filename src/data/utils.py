@@ -12,6 +12,7 @@ from .openwebtext2 import get_openwebtext2_data
 from .redpajama import get_redpajama_data, get_redpajamav2_data
 from .slimpajama import get_slimpajama_data
 from .c4 import get_c4_data
+from .fineweb import get_fineweb_data
 
 
 def get_tokenizer(args):
@@ -73,6 +74,8 @@ def get_dataset(args) -> Union[Dict[str, np.ndarray], Dict[str, any]]:
         return get_slimpajama_data(args.datasets_dir)
     if args.dataset == "c4":
         return get_c4_data(args.datasets_dir, args, 128)
+    if args.dataset in ("fineweb", "fineweb-edu"):
+        return get_fineweb_data(args.datasets_dir, args, 128)
     else:
         raise NotImplementedError(f"Unknown dataset key '{args.dataset}'")
 
