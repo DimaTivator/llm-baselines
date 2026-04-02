@@ -36,6 +36,8 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--wandb-project", default="fp8-pretrain", type=str)
     parser.add_argument("--wandb-group", default=None, type=str,
         help="WandB group. Auto-generated from model/data/iterations if not set.")
+    parser.add_argument("--wandb-tags", nargs="+", default=None, type=str,
+        help="WandB tags for cross-cutting filtering (e.g. --wandb-tags fp8 seed-ablation).")
     parser.add_argument("--eval-seq-prefix", default="none", type=str)
     parser.add_argument("--log-dynamics", action="store_true")
     parser.add_argument(

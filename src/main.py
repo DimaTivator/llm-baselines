@@ -83,6 +83,7 @@ def main(args):
             project=args.wandb_project,
             name=exp_name,
             group=wandb_group,
+            tags=args.wandb_tags,
             config=vars(args),
         )
         wandb.define_metric("iter")
