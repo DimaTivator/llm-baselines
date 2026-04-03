@@ -18,21 +18,13 @@ ITERATIONS=39250
 WARMUP=3925
 BATCH_SIZE=32
 ACC_STEPS=4
-LR=3e-4
+LR=5e-4
 WEIGHT_DECAY=0.1
-
-# ─── AdEMAMix (paper best: Table 2-3, Sec. 3) ───────────────────────────────
-BETA1=0.9
-BETA2=0.999
-BETA3=0.9999
-ALPHA=8
-BETA3_WARMUP=${ITERATIONS}
-ALPHA_WARMUP=${ITERATIONS}
 
 # ─── Launch ───────────────────────────────────────────────────────────────────
 torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --distributed-backend nccl \
-    --experiment-name "ademamix_lr3e-4_wd0.1" \
+    --experiment-name "adam_lr5e-4_wd0.1" \
     \
     --dataset fineweb \
     --datasets-dir "${DATASETS_DIR}" \
@@ -47,16 +39,12 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --multiple-of ${MULTIPLE_OF} \
     --dtype bfloat16 \
     \
-    --opt ademamix \
+    --opt adamw \
     --lr ${LR} \
     --weight-decay ${WEIGHT_DECAY} \
-    --beta1 ${BETA1} \
-    --beta2 ${BETA2} \
-    --ademamix_beta3 ${BETA3} \
-    --ademamix_alpha ${ALPHA} \
-    --ademamix_beta3_warmup_steps ${BETA3_WARMUP} \
-    --ademamix_alpha_warmup_steps ${ALPHA_WARMUP} \
-    --grad-clip 0.5 \
+    --beta1 0.9 \
+    --beta2 0.99 \
+    --grad-clip 1.0 \
     \
     --scheduler cos \
     --warmup-steps ${WARMUP} \
@@ -73,4 +61,4 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --results-base-folder "${RESULTS_DIR}" \
     --wandb \
     --wandb-project "${WANDB_PROJECT}" \
-    --wandb-tags baseline bf16 ademamix
+    --wandb-tags baseline bf16 adam

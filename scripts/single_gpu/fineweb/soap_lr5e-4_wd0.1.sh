@@ -16,8 +16,8 @@ MULTIPLE_OF=256
 # ─── Training ─────────────────────────────────────────────────────────────────
 ITERATIONS=39250
 WARMUP=3925
-BATCH_SIZE=16
-ACC_STEPS=8
+BATCH_SIZE=32
+ACC_STEPS=4
 LR=5e-4
 WEIGHT_DECAY=0.1
 
