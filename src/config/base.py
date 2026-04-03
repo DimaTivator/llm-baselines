@@ -80,6 +80,7 @@ def parse_args(base_parser, args, namespace):
             "sumo",  # SUMO: Subspace-Aware Moment-Orthogonalization
             "badam",  # BAdam: Block-wise Adam
             "adam_mini",  # Adam-mini: memory-efficient Adam with per-block learning rates
+            "slim_adam",  # SlimAdam: memory-efficient Adam with compressed second moments
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -286,6 +287,16 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--cosmos_nestrov", default=True, action="store_true",
         help="Use Nesterov momentum in COSMOS.")
     parser.add_argument("--no_cosmos_nestrov", dest="cosmos_nestrov", action="store_false")
+
+    # SlimAdam parameters
+    parser.add_argument("--slim_adam_rules_json", type=str, default=None,
+        help="SlimAdam: path to a JSON file with explicit per-parameter compression rules. "
+             "Takes priority over --slim_adam_layer_map.")
+    parser.add_argument("--slim_adam_layer_map", type=str, default=None,
+        help="SlimAdam: path to a layer-map JSON that maps layer types to name patterns. "
+             "Defaults to the bundled Llama layer map.")
+    parser.add_argument("--slim_adam_verbose", default=False, action="store_true",
+        help="SlimAdam: print per-parameter compression assignments on startup.")
 
     # Adam-mini parameters
     parser.add_argument("--adam_mini_n_kv_heads", type=int, default=0,
