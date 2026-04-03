@@ -85,8 +85,7 @@ for BETA2 in "${BETA2_LIST[@]}"; do
         --experiment-name "${EXP_NAME}" \
         --results-base-folder "${RESULTS_DIR}" \
         --wandb \
-        --wandb-project "${WANDB_PROJECT}" \
-        --wandb-tags mem_eff bf16 cosmos
+        --wandb-project "${WANDB_PROJECT}"
 
 done
 done

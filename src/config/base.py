@@ -78,6 +78,7 @@ def parse_args(base_parser, args, namespace):
             "coap_adamw",  # COAP
             "cosmos",  # COSMOS
             "sumo",  # SUMO: Subspace-Aware Moment-Orthogonalization
+            "badam",  # BAdam: Block-wise Adam
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -284,6 +285,15 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--cosmos_nestrov", default=True, action="store_true",
         help="Use Nesterov momentum in COSMOS.")
     parser.add_argument("--no_cosmos_nestrov", dest="cosmos_nestrov", action="store_false")
+
+    # BAdam parameters
+    parser.add_argument("--badam_block_size", type=int, default=1,
+        help="BAdam: number of consecutive transformer layers per trainable block.")
+    parser.add_argument("--badam_switch_mode", type=str, default="descending",
+        choices=["random", "ascending", "descending", "fixed"],
+        help="BAdam: order in which blocks are activated (descending = last-to-first).")
+    parser.add_argument("--badam_verbose", type=int, default=1,
+        help="BAdam: verbosity level (0 = silent, 1 = block switches, 2 = per-param).")
 
     # SUMO parameters
     # rank is derived from --density * hidden_size per 2-D parameter

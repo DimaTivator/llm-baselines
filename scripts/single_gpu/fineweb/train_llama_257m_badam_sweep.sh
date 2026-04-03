@@ -20,10 +20,11 @@ ACC_STEPS=8    # 16 * 8 * 1 = 128
 ITERATIONS=39250
 WARMUP=3925    # 10% of iterations
 
-# ─── COAP-specific ───────────────────────────────────────────────────────────
-DENSITY=0.25                  # rank = density * min(p.shape) per 2-D param
-COAP_UPDATE_INTERVAL=32       # cheap projection update every N steps
-COAP_REPROJECT_FACTOR=5       # full SVD every update_interval * factor steps
+# ─── BAdam-specific ───────────────────────────────────────────────────────────
+BLOCK_SIZE=1              # number of transformer layers per trainable block
+UPDATE_GAP=50             # steps between block switches
+SWITCH_MODE=descending    # random | ascending | descending | fixed
+BADAM_VERBOSE=1
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
 LR_LIST=(1e-4 5e-4 1e-3 2e-3)
@@ -31,13 +32,13 @@ WD_LIST=(0.1)
 BETA2_LIST=(0.999)
 DTYPE_LIST=(bfloat16)
 
-# ─── Sweep ────────────────────────────────────────────────────────────────────
+# ─── Sweep ───────────────────────────────────────────────────────────────────
 for DTYPE in "${DTYPE_LIST[@]}"; do
 for LR in "${LR_LIST[@]}"; do
 for WD in "${WD_LIST[@]}"; do
 for BETA2 in "${BETA2_LIST[@]}"; do
 
-    EXP_NAME="llama257M_coap_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_fineweb"
+    EXP_NAME="llama257M_badam_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_bs${BLOCK_SIZE}_fineweb"
     echo "==============================================================="
     echo "Starting: ${EXP_NAME}"
     echo "==============================================================="
@@ -58,16 +59,17 @@ for BETA2 in "${BETA2_LIST[@]}"; do
         --multiple-of ${MULTIPLE_OF} \
         --dtype ${DTYPE} \
         \
-        --opt coap_adamw \
+        --opt badam \
         --lr ${LR} \
         --weight-decay ${WD} \
         --beta1 0.9 \
         --beta2 ${BETA2} \
         --grad-clip 1.0 \
         \
-        --density ${DENSITY} \
-        --coap_update_interval ${COAP_UPDATE_INTERVAL} \
-        --coap_reproject_factor ${COAP_REPROJECT_FACTOR} \
+        --update_gap ${UPDATE_GAP} \
+        --badam_block_size ${BLOCK_SIZE} \
+        --badam_switch_mode ${SWITCH_MODE} \
+        --badam_verbose ${BADAM_VERBOSE} \
         \
         --scheduler cos \
         --warmup-steps ${WARMUP} \

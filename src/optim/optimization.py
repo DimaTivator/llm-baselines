@@ -7,6 +7,7 @@ from .memory_efficient.ldadam import LDAdamW
 from .memory_efficient.coap import COAPAdamW
 from .memory_efficient.cosmos import COSMOS
 from .memory_efficient.sumo import SUMO
+from .memory_efficient.badam import BlockOptimizer, BlockOptimizerRatio
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
@@ -525,28 +526,40 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             use_exact_loro=args.use_exact_loro,
         )
     elif optimizer_name == "badam":
-        raise NotImplementedError
-        from badam import BlockOptimizer as BAdamBlockOptimizer
-        original_optimizer = torch.optim.Adam(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps, foreach=False, fused=False)
-        num_layers = len(model.model.layers)
-        block_size = int(args.density * num_layers)
-        if num_layers % block_size:
-            raise ValueError("Incorrect density - can't split layers in equal parts.")
+        raw_model = model.module if hasattr(model, "module") else model
+        named_params = list(raw_model.named_parameters())
+
+        # Build block_prefix_list: one list of prefixes per block.
+        # Each block covers badam_block_size consecutive transformer layers.
+        block_size = max(1, args.badam_block_size)
+        n_layers = args.n_layer
         block_prefix_list = []
-        for block_start in range(0, num_layers, block_size):
-            cur_block_prefix_list = []
-            for idx in range(block_start, block_start + block_size):
-                cur_block_prefix_list.append(f"model.layers.{idx}.self_attn.")
-                cur_block_prefix_list.append(f"model.layers.{idx}.mlp")
-            block_prefix_list.append(cur_block_prefix_list)
-        optimizer = BAdamBlockOptimizer(
-            base_optimizer=original_optimizer,
-            named_parameters_list=list(model.named_parameters()),
+        for block_start in range(0, n_layers, block_size):
+            block_prefixes = []
+            for idx in range(block_start, min(block_start + block_size, n_layers)):
+                block_prefixes.append(f"transformer.h.{idx}.")
+            block_prefix_list.append(block_prefixes)
+
+        # Always-active modules (embedding, final norm, lm_head)
+        active_modules = ["transformer.wte", "transformer.ln_f", "lm_head"]
+
+        base_optimizer = torch.optim.AdamW(
+            param_groups,
+            betas=(args.beta1, args.beta2),
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            eps=args.eps,
+            foreach=False,
+            fused=False,
+        )
+        optimizer = BlockOptimizer(
+            base_optimizer=base_optimizer,
+            named_parameters_list=named_params,
             block_prefix_list=block_prefix_list,
-            active_modules=[name for name, _ in model.named_parameters() if "embed" in name or "norm" in name or "head" in name],
             switch_block_every=args.update_gap,
-            switch_mode=args.block_order,
-            verbose=2,
+            switch_mode=args.badam_switch_mode,
+            active_modules=active_modules,
+            verbose=args.badam_verbose,
         )
     elif optimizer_name == "coap_adamw":
         optimizer = COAPAdamW(
@@ -574,7 +587,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             nestrov=args.cosmos_nestrov,
         )
     elif optimizer_name == "sumo":
-        rank = max(1, int(args.density * args.hidden_size))
+        rank = max(1, int(args.density * args.n_embd))
         print("\n" * 3)
         print("-" * 30)
         print(f"SUMO Rank: {rank}")
