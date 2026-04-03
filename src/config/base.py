@@ -75,6 +75,7 @@ def parse_args(base_parser, args, namespace):
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
+            "coap_adamw",  # COAP
             "cosmos",  # COSMOS
         ],
     )
@@ -261,6 +262,17 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--apollo_scale_type", type=str, default="tensor")  # "tensor" or "channel"
     parser.add_argument("--apollo_scale", type=float, default=1.0)
     parser.add_argument("--apollo_scale_front", action='store_true')
+
+    # COAP parameters
+    # rank is derived from --density * min(p.shape) per 2-D parameter
+    parser.add_argument("--coap_update_interval", type=int, default=32,
+        help="COAP: steps between cheap projection-matrix updates.")
+    parser.add_argument("--coap_reproject_factor", type=int, default=5,
+        help="COAP: full SVD recomputed every update_interval * reproject_factor steps.")
+    parser.add_argument("--coap_restore_state", default=False, action="store_true",
+        help="COAP: rotate Adam moments into the new basis on each projection update.")
+    parser.add_argument("--coap_scale", type=float, default=1.0,
+        help="COAP: scalar multiplier applied when projecting gradients back to full rank.")
 
     # COSMOS parameters
     # rank is derived from --density * p.size(1) per parameter

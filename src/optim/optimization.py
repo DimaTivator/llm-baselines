@@ -4,6 +4,7 @@ from .memory_efficient.fira import FiraAdamW
 from .memory_efficient.galore import GaLoreAdafactor, AdaMeM
 from .memory_efficient.apollo import APOLLOAdamW
 from .memory_efficient.ldadam import LDAdamW
+from .memory_efficient.coap import COAPAdamW
 from .memory_efficient.cosmos import COSMOS
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
@@ -545,6 +546,19 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             switch_block_every=args.update_gap,
             switch_mode=args.block_order,
             verbose=2,
+        )
+    elif optimizer_name == "coap_adamw":
+        optimizer = COAPAdamW(
+            param_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            density=args.density,
+            update_interval=args.coap_update_interval,
+            reproject_factor=args.coap_reproject_factor,
+            restore_state=args.coap_restore_state,
+            scale=args.coap_scale,
         )
     elif optimizer_name == "cosmos":
         optimizer = COSMOS(
