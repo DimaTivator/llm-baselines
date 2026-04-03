@@ -8,6 +8,7 @@ from .memory_efficient.coap import COAPAdamW
 from .memory_efficient.cosmos import COSMOS
 from .memory_efficient.sumo import SUMO
 from .memory_efficient.badam import BlockOptimizer, BlockOptimizerRatio
+from .memory_efficient.adam_mini import Adam_mini
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
@@ -619,6 +620,28 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             eps=args.eps,
             correct_bias=True,
             no_deprecation_warning=True,
+        )
+    elif optimizer_name == "adam_mini":
+        # Adam-mini takes named_parameters directly and builds its own param groups.
+        # This model uses fused c_attn (combined Q/K/V) and c_proj for both attn output
+        # and MLP down-proj. Adam-mini will classify:
+        #   - transformer.wte          → embd_names  (one lr per token)
+        #   - lm_head                  → output_names (one lr per token)
+        #   - *.mlp.w12 / *.mlp.c_proj → mlp_names   (one lr per neuron, via "mlp" substring)
+        #   - *.attn.c_attn            → other blocks (single lr; fused QKV can't split by head)
+        #   - *.attn.c_proj            → other blocks (single lr)
+        #   - layer norms (ln_1, ln_2) → other blocks (weight decay=0 by name)
+        raw_model = model.module if hasattr(model, "module") else model
+        optimizer = Adam_mini(
+            named_parameters=raw_model.named_parameters(),
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            dim=args.n_embd,
+            n_heads=args.n_head,
+            n_kv_heads=args.adam_mini_n_kv_heads if args.adam_mini_n_kv_heads > 0 else None,
+            verbose=args.adam_mini_verbose,
         )
     else:
         raise ValueError(f"Optimizer {args.opt} not supported")

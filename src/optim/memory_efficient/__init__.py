@@ -10,6 +10,7 @@ from .lora_rite import LoRARiteOptimizer
 from .loro import LOROAdamW, apply_loro, get_loro_param_groups
 from .sumo import SUMO
 from .badam import BlockOptimizer, BlockOptimizerRatio
+from .adam_mini import Adam_mini
 # from .ldadamw import LDAdamW
 # from .sota_opt import AdEMAMix, DistributedMuon, dion, Adan, RMSpropW, ADOPT, NSAdEMAMix, SOAP, MARS, MARS_M
 # from .sgd_related import SgdWithAdam, SgdWithSign, AIDsignSGD, AIDWithAdam

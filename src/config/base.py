@@ -79,6 +79,7 @@ def parse_args(base_parser, args, namespace):
             "cosmos",  # COSMOS
             "sumo",  # SUMO: Subspace-Aware Moment-Orthogonalization
             "badam",  # BAdam: Block-wise Adam
+            "adam_mini",  # Adam-mini: memory-efficient Adam with per-block learning rates
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -285,6 +286,12 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--cosmos_nestrov", default=True, action="store_true",
         help="Use Nesterov momentum in COSMOS.")
     parser.add_argument("--no_cosmos_nestrov", dest="cosmos_nestrov", action="store_false")
+
+    # Adam-mini parameters
+    parser.add_argument("--adam_mini_n_kv_heads", type=int, default=0,
+        help="Adam-mini: number of KV heads for GQA (0 = same as --n-head, i.e. standard MHA).")
+    parser.add_argument("--adam_mini_verbose", default=False, action="store_true",
+        help="Adam-mini: print per-parameter block classification on startup.")
 
     # BAdam parameters
     parser.add_argument("--badam_block_size", type=int, default=1,
