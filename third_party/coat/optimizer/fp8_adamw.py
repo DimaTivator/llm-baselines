@@ -290,7 +290,7 @@ class CoatAdamW(Optimizer):
             max_exp_avg_sqs = []
             state_steps = []
             amsgrad = group["amsgrad"]
-            use_expansion = self.qargs.first_order_expansion.lower() in ["expansion", "true"]
+            use_expansion = self.qargs.first_order_expansion.lower() in ["expansion", "true", "expand"]
             beta1, beta2 = group["betas"]
 
             self._init_group(

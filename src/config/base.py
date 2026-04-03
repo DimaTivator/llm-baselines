@@ -68,7 +68,7 @@ def parse_args(base_parser, args, namespace):
         "--opt",
         default="adamw",
         choices=[
-            "adamw", "sgd", "SFAdamW", "coat_adamw",
+            "adamw", "sgd", "SFAdamW", "coat_adamw", "triton_coat_adamw",
             "galore_adamw", "coord_adamw", "block_adamw", "adalayer", "block_adalayer",  # Frugal/Coord/Block
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
             "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
