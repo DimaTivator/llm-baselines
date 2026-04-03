@@ -77,6 +77,7 @@ def parse_args(base_parser, args, namespace):
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP
             "cosmos",  # COSMOS
+            "sumo",  # SUMO: Subspace-Aware Moment-Orthogonalization
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -283,6 +284,27 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--cosmos_nestrov", default=True, action="store_true",
         help="Use Nesterov momentum in COSMOS.")
     parser.add_argument("--no_cosmos_nestrov", dest="cosmos_nestrov", action="store_false")
+
+    # SUMO parameters
+    # rank is derived from --density * hidden_size per 2-D parameter
+    parser.add_argument("--sumo_alpha", type=float, default=4.0,
+        help="SUMO: scale factor for the full-space update step.")
+    parser.add_argument("--sumo_gamma", type=float, default=1.1,
+        help="SUMO: norm-growth limiter threshold (max allowed norm ratio per step).")
+    parser.add_argument("--sumo_norm_growth_limiter", default=True, action="store_true",
+        help="SUMO: enable norm-growth limiter to constrain abrupt gradient norm increases.")
+    parser.add_argument("--no_sumo_norm_growth_limiter", dest="sumo_norm_growth_limiter", action="store_false")
+    parser.add_argument("--sumo_gradient_perpendicular_scale", type=float, default=1.0,
+        help="SUMO: scaling factor for the perpendicular gradient component in the update.")
+    parser.add_argument("--sumo_lr_adam", type=float, default=1e-5,
+        help="SUMO: learning rate for the AdamW backup (applied to 1-D / non-matrix params).")
+    parser.add_argument("--sumo_weight_decay_adam", type=float, default=0.0,
+        help="SUMO: weight decay for the AdamW backup optimizer.")
+    parser.add_argument("--sumo_scale", type=float, default=1.0,
+        help="SUMO: scalar multiplier applied when projecting gradients back to full rank.")
+    parser.add_argument("--sumo_proj_type", type=str, default="std",
+        choices=["std", "reverse_std", "right", "left", "full"],
+        help="SUMO: projection type for the SUMOProjector.")
 
     # LDAdam parameters
     parser.add_argument("--ldadam_rho", type=float, default=0.908)

@@ -6,6 +6,7 @@ from .memory_efficient.apollo import APOLLOAdamW
 from .memory_efficient.ldadam import LDAdamW
 from .memory_efficient.coap import COAPAdamW
 from .memory_efficient.cosmos import COSMOS
+from .memory_efficient.sumo import SUMO
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
@@ -571,6 +572,40 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             lr_ratio=args.cosmos_lr_ratio,
             gamma=args.cosmos_gamma,
             nestrov=args.cosmos_nestrov,
+        )
+    elif optimizer_name == "sumo":
+        rank = max(1, int(args.density * args.hidden_size))
+        print("\n" * 3)
+        print("-" * 30)
+        print(f"SUMO Rank: {rank}")
+        print("-" * 30)
+        print("\n" * 3)
+        for group in param_groups:
+            if group.get("is_proj_params", False):
+                group["group_name"] = "sumo_params"
+                group["rank"] = rank
+                group["scale"] = args.sumo_scale
+                group["proj_type"] = args.sumo_proj_type
+            else:
+                group["group_name"] = "adam_params"
+        optimizer = SUMO(
+            param_groups,
+            lr=args.lr,
+            beta=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            rank=rank,
+            update_proj_gap=args.update_gap,
+            alpha=args.sumo_alpha,
+            gamma=args.sumo_gamma,
+            nesterov=args.nesterov,
+            momentum=args.momentum,
+            norm_growth_limiter=args.sumo_norm_growth_limiter,
+            gradient_perpendicular_scale=args.sumo_gradient_perpendicular_scale,
+            lr_adam=args.sumo_lr_adam,
+            weight_decay_adam=args.sumo_weight_decay_adam,
+            eps=args.eps,
+            correct_bias=True,
+            no_deprecation_warning=True,
         )
     else:
         raise ValueError(f"Optimizer {args.opt} not supported")
