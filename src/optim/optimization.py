@@ -4,6 +4,13 @@ from .memory_efficient.fira import FiraAdamW
 from .memory_efficient.galore import GaLoreAdafactor, AdaMeM
 from .memory_efficient.apollo import APOLLOAdamW
 from .memory_efficient.ldadam import LDAdamW
+from .memory_efficient.coap import COAPAdamW
+from .memory_efficient.cosmos import COSMOS
+from .memory_efficient.sumo import SUMO
+from .memory_efficient.badam import BlockOptimizer, BlockOptimizerRatio
+from .memory_efficient.adam_mini import Adam_mini
+from .memory_efficient.slim_adam import SlimAdamW
+from .memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH as SLIM_ADAM_DEFAULT_LAYER_MAP
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
@@ -189,7 +196,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
 
                 group["proj_type"] = args.proj_side
         optimizer = APOLLOAdamW(param_groups, lr=args.lr, weight_decay=args.weight_decay, scale_front=args.apollo_scale_front)
-    elif optimizer_name == "ldadam":
+    elif optimizer_name in ("ldadam", "ldadamw"):
         for group in param_groups:
             if group.get("is_proj_params", False):
                 group["enable_lowrank"] = True
@@ -522,29 +529,137 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             use_exact_loro=args.use_exact_loro,
         )
     elif optimizer_name == "badam":
-        raise NotImplementedError
-        from badam import BlockOptimizer as BAdamBlockOptimizer
-        original_optimizer = torch.optim.Adam(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps, foreach=False, fused=False)
-        num_layers = len(model.model.layers)
-        block_size = int(args.density * num_layers)
-        if num_layers % block_size:
-            raise ValueError("Incorrect density - can't split layers in equal parts.")
+        raw_model = model.module if hasattr(model, "module") else model
+        named_params = list(raw_model.named_parameters())
+
+        # Build block_prefix_list: one list of prefixes per block.
+        # Each block covers badam_block_size consecutive transformer layers.
+        block_size = max(1, args.badam_block_size)
+        n_layers = args.n_layer
         block_prefix_list = []
-        for block_start in range(0, num_layers, block_size):
-            cur_block_prefix_list = []
-            for idx in range(block_start, block_start + block_size):
-                cur_block_prefix_list.append(f"model.layers.{idx}.self_attn.")
-                cur_block_prefix_list.append(f"model.layers.{idx}.mlp")
-            block_prefix_list.append(cur_block_prefix_list)
-        optimizer = BAdamBlockOptimizer(
-            base_optimizer=original_optimizer,
-            named_parameters_list=list(model.named_parameters()),
+        for block_start in range(0, n_layers, block_size):
+            block_prefixes = []
+            for idx in range(block_start, min(block_start + block_size, n_layers)):
+                block_prefixes.append(f"transformer.h.{idx}.")
+            block_prefix_list.append(block_prefixes)
+
+        # Always-active modules (embedding, final norm, lm_head)
+        active_modules = ["transformer.wte", "transformer.ln_f", "lm_head"]
+
+        base_optimizer = torch.optim.AdamW(
+            param_groups,
+            betas=(args.beta1, args.beta2),
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            eps=args.eps,
+            foreach=False,
+            fused=False,
+        )
+        optimizer = BlockOptimizer(
+            base_optimizer=base_optimizer,
+            named_parameters_list=named_params,
             block_prefix_list=block_prefix_list,
-            active_modules=[name for name, _ in model.named_parameters() if "embed" in name or "norm" in name or "head" in name],
             switch_block_every=args.update_gap,
-            switch_mode=args.block_order,
-            verbose=2,
+            switch_mode=args.badam_switch_mode,
+            active_modules=active_modules,
+            verbose=args.badam_verbose,
+        )
+    elif optimizer_name == "coap_adamw":
+        optimizer = COAPAdamW(
+            param_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            density=args.density,
+            update_interval=args.coap_update_interval,
+            reproject_factor=args.coap_reproject_factor,
+            restore_state=args.coap_restore_state,
+            scale=args.coap_scale,
+        )
+    elif optimizer_name == "cosmos":
+        optimizer = COSMOS(
+            param_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            density=args.density,
+            lr_ratio=args.cosmos_lr_ratio,
+            gamma=args.cosmos_gamma,
+            nestrov=args.cosmos_nestrov,
+        )
+    elif optimizer_name == "sumo":
+        rank = max(1, int(args.density * args.n_embd))
+        print("\n" * 3)
+        print("-" * 30)
+        print(f"SUMO Rank: {rank}")
+        print("-" * 30)
+        print("\n" * 3)
+        for group in param_groups:
+            if group.get("is_proj_params", False):
+                group["group_name"] = "sumo_params"
+                group["rank"] = rank
+                group["scale"] = args.sumo_scale
+                group["proj_type"] = args.sumo_proj_type
+            else:
+                group["group_name"] = "adam_params"
+        optimizer = SUMO(
+            param_groups,
+            lr=args.lr,
+            beta=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            rank=rank,
+            update_proj_gap=args.update_gap,
+            alpha=args.sumo_alpha,
+            gamma=args.sumo_gamma,
+            nesterov=args.nesterov,
+            momentum=args.momentum,
+            norm_growth_limiter=args.sumo_norm_growth_limiter,
+            gradient_perpendicular_scale=args.sumo_gradient_perpendicular_scale,
+            lr_adam=args.sumo_lr_adam,
+            weight_decay_adam=args.sumo_weight_decay_adam,
+            eps=args.eps,
+            correct_bias=True,
+            no_deprecation_warning=True,
+        )
+    elif optimizer_name == "slim_adam":
+        raw_model = model.module if hasattr(model, "module") else model
+        # Use explicit rules JSON if provided, otherwise fall back to the bundled layer map.
+        rules_json = args.slim_adam_rules_json if args.slim_adam_rules_json else None
+        layer_map  = None if rules_json else (args.slim_adam_layer_map or SLIM_ADAM_DEFAULT_LAYER_MAP)
+        optimizer = SlimAdamW(
+            named_parameters=raw_model.named_parameters(),
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            rules_json_path=rules_json,
+            layer_map_path=layer_map,
+            verbose=args.slim_adam_verbose,
+        )
+    elif optimizer_name == "adam_mini":
+        # Adam-mini takes named_parameters directly and builds its own param groups.
+        # This model uses fused c_attn (combined Q/K/V) and c_proj for both attn output
+        # and MLP down-proj. Adam-mini will classify:
+        #   - transformer.wte          → embd_names  (one lr per token)
+        #   - lm_head                  → output_names (one lr per token)
+        #   - *.mlp.w12 / *.mlp.c_proj → mlp_names   (one lr per neuron, via "mlp" substring)
+        #   - *.attn.c_attn            → other blocks (single lr; fused QKV can't split by head)
+        #   - *.attn.c_proj            → other blocks (single lr)
+        #   - layer norms (ln_1, ln_2) → other blocks (weight decay=0 by name)
+        raw_model = model.module if hasattr(model, "module") else model
+        optimizer = Adam_mini(
+            named_parameters=raw_model.named_parameters(),
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            dim=args.n_embd,
+            n_heads=args.n_head,
+            n_kv_heads=args.adam_mini_n_kv_heads if args.adam_mini_n_kv_heads > 0 else None,
+            verbose=args.adam_mini_verbose,
         )
     else:
-        raise ValueError(f"Optimizer {args.optimizer} not supported")
+        raise ValueError(f"Optimizer {args.opt} not supported")
     return optimizer
