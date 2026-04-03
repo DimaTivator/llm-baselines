@@ -4,6 +4,7 @@ from .memory_efficient.fira import FiraAdamW
 from .memory_efficient.galore import GaLoreAdafactor, AdaMeM
 from .memory_efficient.apollo import APOLLOAdamW
 from .memory_efficient.ldadam import LDAdamW
+from .memory_efficient.cosmos import COSMOS
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
@@ -189,7 +190,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
 
                 group["proj_type"] = args.proj_side
         optimizer = APOLLOAdamW(param_groups, lr=args.lr, weight_decay=args.weight_decay, scale_front=args.apollo_scale_front)
-    elif optimizer_name == "ldadam":
+    elif optimizer_name in ("ldadam", "ldadamw"):
         for group in param_groups:
             if group.get("is_proj_params", False):
                 group["enable_lowrank"] = True
@@ -545,6 +546,18 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             switch_mode=args.block_order,
             verbose=2,
         )
+    elif optimizer_name == "cosmos":
+        optimizer = COSMOS(
+            param_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=args.weight_decay,
+            density=args.density,
+            lr_ratio=args.cosmos_lr_ratio,
+            gamma=args.cosmos_gamma,
+            nestrov=args.cosmos_nestrov,
+        )
     else:
-        raise ValueError(f"Optimizer {args.optimizer} not supported")
+        raise ValueError(f"Optimizer {args.opt} not supported")
     return optimizer

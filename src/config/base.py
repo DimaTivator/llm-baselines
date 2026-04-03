@@ -75,6 +75,7 @@ def parse_args(base_parser, args, namespace):
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
+            "cosmos",  # COSMOS
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -260,6 +261,16 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--apollo_scale_type", type=str, default="tensor")  # "tensor" or "channel"
     parser.add_argument("--apollo_scale", type=float, default=1.0)
     parser.add_argument("--apollo_scale_front", action='store_true')
+
+    # COSMOS parameters
+    # rank is derived from --density * p.size(1) per parameter
+    parser.add_argument("--cosmos_lr_ratio", type=float, default=0.1,
+        help="COSMOS lr scaling ratio for the low-rank update.")
+    parser.add_argument("--cosmos_gamma", type=float, default=0.2,
+        help="COSMOS weight for the Newton-Schulz (orthogonalised) update component.")
+    parser.add_argument("--cosmos_nestrov", default=True, action="store_true",
+        help="Use Nesterov momentum in COSMOS.")
+    parser.add_argument("--no_cosmos_nestrov", dest="cosmos_nestrov", action="store_false")
 
     # LDAdam parameters
     parser.add_argument("--ldadam_rho", type=float, default=0.908)

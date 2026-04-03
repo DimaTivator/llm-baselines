@@ -3,6 +3,7 @@ from .fira import FiraAdamW
 from .galore import GaLoreAdafactor, AdaMeM
 from .apollo import APOLLOAdamW
 from .ldadam import LDAdamW
+from .cosmos import COSMOS
 from .lora import LoRAOptimizer
 from .lora_rite import LoRARiteOptimizer
 from .loro import LOROAdamW, apply_loro, get_loro_param_groups
