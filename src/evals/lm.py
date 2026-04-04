@@ -1,5 +1,5 @@
 import math
-import urllib.request
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -8,9 +8,34 @@ import torch
 import wandb
 
 
-WIKITEXT103_ZIP_URL = (
-    "https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-103-raw-v1.zip"
-)
+WIKITEXT103_HF_REPO_ID = "mattdangerw/wikitext-103-raw"
+WIKITEXT103_HF_ZIP_FILENAME = "wikitext-103-raw-v1.zip"
+
+
+def _download_wikitext103_zip(zip_path):
+    try:
+        from huggingface_hub import hf_hub_download
+    except Exception as error:
+        raise RuntimeError(
+            "huggingface_hub is required for Wikitext-103 LM eval download. "
+            "Install dependencies from requirements.txt."
+        ) from error
+
+    try:
+        downloaded_path = Path(
+            hf_hub_download(
+                repo_id=WIKITEXT103_HF_REPO_ID,
+                filename=WIKITEXT103_HF_ZIP_FILENAME,
+                repo_type="dataset",
+            )
+        )
+        if downloaded_path != zip_path:
+            shutil.copyfile(downloaded_path, zip_path)
+    except Exception as error:
+        raise RuntimeError(
+            "Failed to download Wikitext-103 from Hugging Face dataset "
+            f"'{WIKITEXT103_HF_REPO_ID}' ({WIKITEXT103_HF_ZIP_FILENAME})."
+        ) from error
 
 
 def _tokenizer_cache_name(cfg, tokenizer):
@@ -42,7 +67,7 @@ def _prepare_wikitext103_cache(datasets_dir, cfg, tokenizer):
     if not valid_path.exists():
         if not zip_path.exists():
             print("Downloading Wikitext-103 raw validation data...")
-            urllib.request.urlretrieve(WIKITEXT103_ZIP_URL, zip_path)
+            _download_wikitext103_zip(zip_path)
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(raw_dir)
 
