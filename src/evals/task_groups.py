@@ -3,6 +3,13 @@ TASK_GROUPS = {
         "hellaswag",
         "arc_easy",
     ],
+    "basic_v2": [
+        "hellaswag",
+        "arc_easy",
+        "arc_challenge",
+        "piqa",
+        "gsm8k_gold_bpb_5shot",
+    ],
 }
 
 
