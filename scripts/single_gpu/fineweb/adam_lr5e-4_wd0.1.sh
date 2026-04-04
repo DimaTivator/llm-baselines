@@ -57,7 +57,7 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --eval-batches 32 \
     --downstream-eval-enabled \
     --downstream-eval-interval 2000 \
-    --downstream-task-group basic_v1 \
+    --downstream-task-group basic_v2 \
     --lm-eval-enabled \
     --lm-eval-interval 2000 \
     --lm-eval-datasets wikitext103 \
