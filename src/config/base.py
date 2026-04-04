@@ -12,6 +12,13 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--eval-interval", default=200, type=int)
     parser.add_argument("--full-eval-at", nargs="+", type=int)
     parser.add_argument("--eval-batches", default=32, type=int)
+    parser.add_argument("--downstream-eval-enabled", action="store_true")
+    parser.add_argument("--downstream-eval-interval", default=0, type=int)
+    parser.add_argument("--downstream-task-group", default=None, type=str)
+    parser.add_argument("--downstream-tasks", nargs="+", default=None, type=str)
+    parser.add_argument("--lm-eval-enabled", action="store_true")
+    parser.add_argument("--lm-eval-interval", default=0, type=int)
+    parser.add_argument("--lm-eval-datasets", nargs="+", default=None, type=str)
     parser.add_argument("--device", default="cuda:0", type=str)
     parser.add_argument(
         "--distributed-backend",

@@ -19,6 +19,7 @@ for _p in [_SRC, _ROOT]:
 import config
 from data.utils import DataReader, get_dataset, get_tokenizer
 import distributed
+from evals import build_evaluators
 from models.utils import get_model
 from optim.base import train
 from optim.utils import cos_inf_schedule, wsd_schedule
@@ -89,6 +90,8 @@ def main(args):
         wandb.define_metric("iter")
         wandb.define_metric("train/*", step_metric="iter")
         wandb.define_metric("val/*",   step_metric="iter")
+        wandb.define_metric("downstream/*", step_metric="iter")
+        wandb.define_metric("aux-lm/*", step_metric="iter")
         wandb.define_metric("lr",      step_metric="iter")
 
     print(f"Starting Experiment: {exp_name}")
@@ -96,7 +99,22 @@ def main(args):
     print(f"Config:\n{vars(args)}\n")
 
     print(f"Loading dataset: '{args.dataset}'")
-    datareaders = get_data_readers(args)
+    runtime_tokenizer = None
+    needs_runtime_tokenizer = getattr(args, "streaming", False) or (
+        getattr(args, "downstream_eval_enabled", False)
+        and getattr(args, "downstream_eval_interval", 0) > 0
+    ) or (
+        getattr(args, "lm_eval_enabled", False)
+        and getattr(args, "lm_eval_interval", 0) > 0
+    )
+    if needs_runtime_tokenizer:
+        runtime_tokenizer = get_tokenizer(args)
+
+    datareaders = get_data_readers(args, tokenizer=runtime_tokenizer)
+    downstream_evaluator, lm_evaluator = build_evaluators(
+        args,
+        tokenizer=runtime_tokenizer,
+    )
 
     model = get_model(args).to(args.device)
     print(f"\nModel:\n{model}")
@@ -334,6 +352,8 @@ def main(args):
         exp_dir=exp_dir,
         distributed_backend=distributed_backend,
         cfg=args,
+        downstream_evaluator=downstream_evaluator,
+        lm_evaluator=lm_evaluator,
         activation_dtypes=activation_dtypes,
         debug_dtypes=args.debug_dtype,
     )
@@ -370,7 +390,7 @@ def get_wandb_group(args):
     return f"{args.model}-{args.n_layer}L{args.n_head}H_{args.dataset}_{args.iterations // 1000}k"
 
 
-def get_data_readers(args, verbose=True):
+def get_data_readers(args, verbose=True, tokenizer=None):
     """Get data readers, supporting both streaming and traditional approaches."""
 
     # Set eval_batch_size if not provided
@@ -388,7 +408,7 @@ def get_data_readers(args, verbose=True):
         # Streaming approach
         print("Setting up streaming data readers...")
 
-        tokenizer = get_tokenizer(args)
+        tokenizer = tokenizer or get_tokenizer(args)
         estimated_tokens = data_srcs.get("estimated_tokens", 100_000_000)
 
         train_reader = StreamingDataReader(

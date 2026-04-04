@@ -41,6 +41,8 @@ def train(
     exp_dir,
     distributed_backend,
     cfg,
+    downstream_evaluator=None,
+    lm_evaluator=None,
     activation_dtypes=None,
     debug_dtypes=False
 ):
@@ -123,7 +125,14 @@ def train(
     substep = curr_iter * cfg.acc_steps
     train_reader, val_reader = datareaders["train"], datareaders["val"]
     train_reader.set_step(substep)
-    stats = {"train_loss": [], "val_loss": [], "val_pp": [], "val_acc": []}
+    stats = {
+        "train_loss": [],
+        "val_loss": [],
+        "val_pp": [],
+        "val_acc": [],
+        "downstream": [],
+        "aux_lm": [],
+    }
     model.train()
 
     # Initialize the progress bar
@@ -237,6 +246,28 @@ def train(
                     cfg,
                     full_eval=(curr_iter in cfg.full_eval_at),
                 )
+
+        if downstream_evaluator is not None and downstream_evaluator.should_run(curr_iter):
+            downstream_logs = downstream_evaluator.evaluate(
+                curr_iter,
+                epoch,
+                model,
+                type_ctx,
+                distributed_backend,
+            )
+            if downstream_logs is not None:
+                stats["downstream"].append(downstream_logs)
+
+        if lm_evaluator is not None and lm_evaluator.should_run(curr_iter):
+            lm_logs = lm_evaluator.evaluate(
+                curr_iter,
+                epoch,
+                model,
+                type_ctx,
+                distributed_backend,
+            )
+            if lm_logs is not None:
+                stats["aux_lm"].append(lm_logs)
 
         if curr_iter == cfg.iterations:
             # Save checkpoints and evaluate at final iteration, but no need to train further
