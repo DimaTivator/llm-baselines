@@ -40,6 +40,22 @@ def _to_float(value):
     return float(value)
 
 
+def _select_latest_metrics(raw_metrics):
+    # ai2-olmo-eval==0.8.5 emits v1/v2 metric variants for compatibility.
+    # In that package, v1/v2 reflect two continuation-length normalizations around
+    # leading-space handling (see olmo_eval/tasks.py ~120/~123 and metrics.py ~391),
+    # and some metrics (e.g. acc/len_norm) are duplicated across both versions
+    # (see metrics.py ~420). We keep only *_v2 to reduce logging noise.
+    """Prefer versioned v2 metrics to reduce logging noise."""
+    if not isinstance(raw_metrics, dict):
+        return raw_metrics
+
+    v2_metrics = {name: value for name, value in raw_metrics.items() if str(name).endswith("_v2")}
+    if v2_metrics:
+        return v2_metrics
+    return raw_metrics
+
+
 class DownstreamEvaluator:
     def __init__(self, cfg, tokenizer, tokenizer_identifier):
         self.cfg = cfg
@@ -150,6 +166,7 @@ class DownstreamEvaluator:
                 metric.update(batch, outputs["logits"])
 
             raw_metrics = metric.compute()
+            raw_metrics = _select_latest_metrics(raw_metrics)
             if not isinstance(raw_metrics, dict):
                 metric_name = getattr(runtime["dataset"], "metric_type", "score")
                 raw_metrics = {metric_name: raw_metrics}
