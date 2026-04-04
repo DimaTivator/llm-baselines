@@ -2,12 +2,14 @@
 tiktoken
 transformers>=4.45.2
 datasets
+huggingface_hub
 zstandard
 
 # Training utilities
 tqdm
 schedulefree
 scipy
+ai2-olmo-eval==0.8.5
 
 # Logging
 wandb
