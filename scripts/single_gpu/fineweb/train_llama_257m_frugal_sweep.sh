@@ -26,7 +26,7 @@ UPDATE_GAP=50
 COORD_CHOICE="columns"
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
-LR_LIST=(5e-4)
+LR_LIST=(1e-3 2e-3)
 WD_LIST=(0.1)
 BETA2_LIST=(0.999)
 DTYPE_LIST=(bfloat16)

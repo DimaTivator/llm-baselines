@@ -20,26 +20,28 @@ ACC_STEPS=8    # 16 * 8 * 1 = 128
 ITERATIONS=39250
 WARMUP=3925    # 10% of iterations
 
-# ─── APOLLO-specific ─────────────────────────────────────────────────────────
+# ─── Riemannian LoRA specific ────────────────────────────────────────────────
+# rank = 0 → computed as density * n_embd (e.g. 0.25 * 1024 = 256)
 DENSITY=0.25
-UPDATE_GAP=50
-APOLLO_PROJ="random"
-APOLLO_SCALE_TYPE="channel"
-APOLLO_SCALE=1.0
+RIEMANNIAN_RANK=0        # 0 = auto from density
+RIEMANNIAN_SCOPE="all"   # all | attn | mlp
+RIEMANNIAN_INIT="orth"   # orth (Kaiming-scaled) | zero (adapter style)
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
-LR_LIST=(1e-3 2e-3)
+LR_LIST=(1e-4 5e-4 1e-3 2e-3)
 WD_LIST=(0.1)
+BETA1_LIST=(0.9)
 BETA2_LIST=(0.999)
-DTYPE_LIST=(bfloat16)
+OPT_LIST=(riemannian_adamw)   # riemannian_adamw | riemannian_sgd
 
-# ─── Sweep ────────────────────────────────────────────────────────────────────
-for DTYPE in "${DTYPE_LIST[@]}"; do
+# ─── Sweep ───────────────────────────────────────────────────────────────────
+for OPT in "${OPT_LIST[@]}"; do
 for LR in "${LR_LIST[@]}"; do
 for WD in "${WD_LIST[@]}"; do
+for BETA1 in "${BETA1_LIST[@]}"; do
 for BETA2 in "${BETA2_LIST[@]}"; do
 
-    EXP_NAME="llama257M_apollo_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_fineweb"
+    EXP_NAME="llama257M_${OPT}_scope${RIEMANNIAN_SCOPE}_d${DENSITY}_lr${LR}_wd${WD}_b1${BETA1}_b2${BETA2}_fineweb"
     echo "==============================================================="
     echo "Starting: ${EXP_NAME}"
     echo "==============================================================="
@@ -58,20 +60,19 @@ for BETA2 in "${BETA2_LIST[@]}"; do
         --n-embd  ${N_EMBD} \
         --n-head  ${N_HEAD} \
         --multiple-of ${MULTIPLE_OF} \
-        --dtype ${DTYPE} \
+        --dtype bfloat16 \
         \
-        --opt apollo_adamw \
+        --opt ${OPT} \
         --lr ${LR} \
         --weight-decay ${WD} \
-        --beta1 0.9 \
+        --beta1 ${BETA1} \
         --beta2 ${BETA2} \
         --grad-clip 1.0 \
         \
         --density ${DENSITY} \
-        --update_gap ${UPDATE_GAP} \
-        --apollo_proj ${APOLLO_PROJ} \
-        --apollo_scale_type ${APOLLO_SCALE_TYPE} \
-        --apollo_scale ${APOLLO_SCALE} \
+        --riemannian_rank ${RIEMANNIAN_RANK} \
+        --riemannian_scope ${RIEMANNIAN_SCOPE} \
+        --riemannian_init ${RIEMANNIAN_INIT} \
         \
         --scheduler cos \
         --warmup-steps ${WARMUP} \
@@ -90,6 +91,7 @@ for BETA2 in "${BETA2_LIST[@]}"; do
         --wandb \
         --wandb-project "${WANDB_PROJECT}"
 
+done
 done
 done
 done

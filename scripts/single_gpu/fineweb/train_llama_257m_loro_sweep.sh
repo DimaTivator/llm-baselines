@@ -28,7 +28,7 @@ LORO_SCOPE="all"
 LORO_LR_SCALER=-1.0   # adaptive r/d
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
-LR_LIST=(5e-4)
+LR_LIST=(1e-4 5e-4 1e-3 2e-3)
 WD_LIST=(0.1)
 BETA2_LIST=(0.999)
 DTYPE_LIST=(bfloat16)
@@ -39,7 +39,7 @@ for LR in "${LR_LIST[@]}"; do
 for WD in "${WD_LIST[@]}"; do
 for BETA2 in "${BETA2_LIST[@]}"; do
 
-    EXP_NAME="llama257M_loro_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_fineweb_R_0.5"
+    EXP_NAME="llama257M_loro_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_R_0.5_fineweb"
     echo "==============================================================="
     echo "Starting: ${EXP_NAME}"
     echo "==============================================================="

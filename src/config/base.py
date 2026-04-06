@@ -83,6 +83,8 @@ def parse_args(base_parser, args, namespace):
             "badam",  # BAdam: Block-wise Adam
             "adam_mini",  # Adam-mini: memory-efficient Adam with per-block learning rates
             "slim_adam",  # SlimAdam: memory-efficient Adam with compressed second moments
+            "riemannian_adamw",  # Riemannian Adam on Stiefel manifold (LoRA factors)
+            "riemannian_sgd",   # Riemannian SGD on Stiefel manifold (LoRA factors)
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -442,6 +444,20 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--mars_beta2", type=float, default=0.99)
     parser.add_argument("--mars_gamma", type=float, default=0.025)
     parser.add_argument("--mars_type", type=str, default="mars-adamw", choices=["mars-adamw", "mars-lion", "mars-shampoo"])
+
+    # Riemannian LoRA parameters
+    parser.add_argument("--riemannian_rank", type=int, default=0,
+        help="Riemannian LoRA rank r. If 0, computed from --density * n_embd.")
+    parser.add_argument("--riemannian_scope", type=str, default="all",
+        choices=["all", "attn", "mlp"],
+        help="Which sub-modules to replace with Riemannian LoRA layers.")
+    parser.add_argument("--riemannian_init", type=str, default="orth",
+        choices=["orth", "zero"],
+        help="B-factor init: 'orth' = Kaiming-scaled random (pretraining), "
+             "'zero' = zero init (adapter fine-tuning).")
+    parser.add_argument("--riemannian_sgd_momentum", type=float, default=0.0,
+        help="Momentum for riemannian_sgd (maps to beta1). "
+             "For riemannian_adamw use --beta1/--beta2.")
 
     # Local Saving
     parser.add_argument("--no-local-save", action="store_true", help="Disable saving checkpoints and results to local disk.")

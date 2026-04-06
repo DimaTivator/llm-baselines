@@ -28,7 +28,7 @@ APOLLO_SCALE_TYPE="tensor"   # tensor-wise scalar = APOLLO-mini
 APOLLO_SCALE=1.0
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
-LR_LIST=(1e-4 5e-4 1e-3 2e-3)
+LR_LIST=(2e-3)
 WD_LIST=(0.1)
 BETA2_LIST=(0.999)
 DTYPE_LIST=(bfloat16)
