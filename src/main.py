@@ -119,6 +119,17 @@ def main(args):
     model = get_model(args).to(args.device)
     print(f"\nModel:\n{model}")
 
+    # ── Riemannian LoRA: replace Linear modules with RiemannianLoraLinear *before* DDP ──
+    if args.opt in ("riemannian_adamw", "riemannian_sgd"):
+        from optim.memory_efficient.riemannian_lora import apply_riemannian_lora
+        riemannian_rank = args.riemannian_rank if args.riemannian_rank > 0 else int(args.density * args.n_embd)
+        apply_riemannian_lora(
+            model,
+            rank=riemannian_rank,
+            scope=args.riemannian_scope,
+            init=args.riemannian_init,
+        )
+
     # ── LORO: replace Linear modules with LowRank *before* DDP ────────
     if args.opt in ("loro", "loro_adpt"):
         from optim.memory_efficient.loro.utils import apply_loro
@@ -146,7 +157,12 @@ def main(args):
     model = distributed_backend.transform_model(model)
 
     # ── Parameter groups ───────────────────────────────────────────────
-    if args.opt in ("loro", "loro_adpt"):
+    if args.opt in ("riemannian_adamw", "riemannian_sgd"):
+        # Param groups are built inside the optimizer instantiation block below.
+        group_specs = None
+        optimized_params_cnt = sum(p.numel() for p in distributed_backend.get_raw_model(model).parameters() if p.requires_grad)
+
+    elif args.opt in ("loro", "loro_adpt"):
         # LORO uses its own param-group structure (type: regular/lowrank_in/lowrank_out)
         from optim.memory_efficient.loro.utils import get_loro_param_groups
         loro_mode = "adapter" if args.opt == "loro_adpt" else "lowrank"
@@ -180,7 +196,26 @@ def main(args):
         wandb.log({"parameters": params_cnt, "optimized_parameters": optimized_params_cnt})
 
     # ── Optimiser ─────────────────────────────────────────────────────────
-    if args.opt == "coat_adamw":
+    if args.opt in ("riemannian_adamw", "riemannian_sgd"):
+        from optim.memory_efficient.riemannian_lora import get_riemannian_param_groups, RiemannianPretrainOptimizer
+        riemannian_rank = args.riemannian_rank if args.riemannian_rank > 0 else int(args.density * args.n_embd)
+        lora_groups, regular_groups = get_riemannian_param_groups(
+            distributed_backend.get_raw_model(model),
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+        )
+        opt_type = "sgd" if args.opt == "riemannian_sgd" else "adamw"
+        opt = RiemannianPretrainOptimizer(
+            lora_groups=lora_groups,
+            regular_groups=regular_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            eps=args.eps,
+            opt_type=opt_type,
+        )
+    elif args.opt == "coat_adamw":
         from third_party.coat.optimizer.fp8_adamw import CoatAdamW
         if args.qargs is None:
             raise ValueError("coat_adamw requires --fp8-optim (which builds qargs).")

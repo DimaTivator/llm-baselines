@@ -321,8 +321,8 @@ class GPTBase(nn.Module):
         )
 
         return [
-            {"params": sorted(list(decay))},
-            {"params": sorted(list(no_decay)), "weight_decay": 0.0},
+            {"params": sorted(list(decay)), "is_proj_params": True},
+            {"params": sorted(list(no_decay)), "weight_decay": 0.0, "is_proj_params": False},
         ]
 
     @torch.no_grad()

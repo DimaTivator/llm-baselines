@@ -84,6 +84,14 @@ def parse_args(base_parser, args, namespace):
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
+            "coap_adamw",  # COAP
+            "cosmos",  # COSMOS
+            "sumo",  # SUMO: Subspace-Aware Moment-Orthogonalization
+            "badam",  # BAdam: Block-wise Adam
+            "adam_mini",  # Adam-mini: memory-efficient Adam with per-block learning rates
+            "slim_adam",  # SlimAdam: memory-efficient Adam with compressed second moments
+            "riemannian_adamw",  # Riemannian Adam on Stiefel manifold (LoRA factors)
+            "riemannian_sgd",   # Riemannian SGD on Stiefel manifold (LoRA factors)
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -270,6 +278,73 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--apollo_scale", type=float, default=1.0)
     parser.add_argument("--apollo_scale_front", action='store_true')
 
+    # COAP parameters
+    # rank is derived from --density * min(p.shape) per 2-D parameter
+    parser.add_argument("--coap_update_interval", type=int, default=32,
+        help="COAP: steps between cheap projection-matrix updates.")
+    parser.add_argument("--coap_reproject_factor", type=int, default=5,
+        help="COAP: full SVD recomputed every update_interval * reproject_factor steps.")
+    parser.add_argument("--coap_restore_state", default=False, action="store_true",
+        help="COAP: rotate Adam moments into the new basis on each projection update.")
+    parser.add_argument("--coap_scale", type=float, default=1.0,
+        help="COAP: scalar multiplier applied when projecting gradients back to full rank.")
+
+    # COSMOS parameters
+    # rank is derived from --density * p.size(1) per parameter
+    parser.add_argument("--cosmos_lr_ratio", type=float, default=0.1,
+        help="COSMOS lr scaling ratio for the low-rank update.")
+    parser.add_argument("--cosmos_gamma", type=float, default=0.2,
+        help="COSMOS weight for the Newton-Schulz (orthogonalised) update component.")
+    parser.add_argument("--cosmos_nestrov", default=True, action="store_true",
+        help="Use Nesterov momentum in COSMOS.")
+    parser.add_argument("--no_cosmos_nestrov", dest="cosmos_nestrov", action="store_false")
+
+    # SlimAdam parameters
+    parser.add_argument("--slim_adam_rules_json", type=str, default=None,
+        help="SlimAdam: path to a JSON file with explicit per-parameter compression rules. "
+             "Takes priority over --slim_adam_layer_map.")
+    parser.add_argument("--slim_adam_layer_map", type=str, default=None,
+        help="SlimAdam: path to a layer-map JSON that maps layer types to name patterns. "
+             "Defaults to the bundled Llama layer map.")
+    parser.add_argument("--slim_adam_verbose", default=False, action="store_true",
+        help="SlimAdam: print per-parameter compression assignments on startup.")
+
+    # Adam-mini parameters
+    parser.add_argument("--adam_mini_n_kv_heads", type=int, default=0,
+        help="Adam-mini: number of KV heads for GQA (0 = same as --n-head, i.e. standard MHA).")
+    parser.add_argument("--adam_mini_verbose", default=False, action="store_true",
+        help="Adam-mini: print per-parameter block classification on startup.")
+
+    # BAdam parameters
+    parser.add_argument("--badam_block_size", type=int, default=1,
+        help="BAdam: number of consecutive transformer layers per trainable block.")
+    parser.add_argument("--badam_switch_mode", type=str, default="descending",
+        choices=["random", "ascending", "descending", "fixed"],
+        help="BAdam: order in which blocks are activated (descending = last-to-first).")
+    parser.add_argument("--badam_verbose", type=int, default=1,
+        help="BAdam: verbosity level (0 = silent, 1 = block switches, 2 = per-param).")
+
+    # SUMO parameters
+    # rank is derived from --density * hidden_size per 2-D parameter
+    parser.add_argument("--sumo_alpha", type=float, default=4.0,
+        help="SUMO: scale factor for the full-space update step.")
+    parser.add_argument("--sumo_gamma", type=float, default=1.1,
+        help="SUMO: norm-growth limiter threshold (max allowed norm ratio per step).")
+    parser.add_argument("--sumo_norm_growth_limiter", default=True, action="store_true",
+        help="SUMO: enable norm-growth limiter to constrain abrupt gradient norm increases.")
+    parser.add_argument("--no_sumo_norm_growth_limiter", dest="sumo_norm_growth_limiter", action="store_false")
+    parser.add_argument("--sumo_gradient_perpendicular_scale", type=float, default=1.0,
+        help="SUMO: scaling factor for the perpendicular gradient component in the update.")
+    parser.add_argument("--sumo_lr_adam", type=float, default=1e-5,
+        help="SUMO: learning rate for the AdamW backup (applied to 1-D / non-matrix params).")
+    parser.add_argument("--sumo_weight_decay_adam", type=float, default=0.0,
+        help="SUMO: weight decay for the AdamW backup optimizer.")
+    parser.add_argument("--sumo_scale", type=float, default=1.0,
+        help="SUMO: scalar multiplier applied when projecting gradients back to full rank.")
+    parser.add_argument("--sumo_proj_type", type=str, default="std",
+        choices=["std", "reverse_std", "right", "left", "full"],
+        help="SUMO: projection type for the SUMOProjector.")
+
     # LDAdam parameters
     parser.add_argument("--ldadam_rho", type=float, default=0.908)
     parser.add_argument("--ldadam_proj_method", type=str, default="power_iteration")
@@ -376,6 +451,20 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--mars_beta2", type=float, default=0.99)
     parser.add_argument("--mars_gamma", type=float, default=0.025)
     parser.add_argument("--mars_type", type=str, default="mars-adamw", choices=["mars-adamw", "mars-lion", "mars-shampoo"])
+
+    # Riemannian LoRA parameters
+    parser.add_argument("--riemannian_rank", type=int, default=0,
+        help="Riemannian LoRA rank r. If 0, computed from --density * n_embd.")
+    parser.add_argument("--riemannian_scope", type=str, default="all",
+        choices=["all", "attn", "mlp"],
+        help="Which sub-modules to replace with Riemannian LoRA layers.")
+    parser.add_argument("--riemannian_init", type=str, default="orth",
+        choices=["orth", "zero"],
+        help="B-factor init: 'orth' = Kaiming-scaled random (pretraining), "
+             "'zero' = zero init (adapter fine-tuning).")
+    parser.add_argument("--riemannian_sgd_momentum", type=float, default=0.0,
+        help="Momentum for riemannian_sgd (maps to beta1). "
+             "For riemannian_adamw use --beta1/--beta2.")
 
     # Local Saving
     parser.add_argument("--no-local-save", action="store_true", help="Disable saving checkpoints and results to local disk.")

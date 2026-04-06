@@ -297,7 +297,7 @@ class LDAdamW(torch.optim.Optimizer):
 
 
     ### GRADIENT ACCUMULATION AND ERROR BUFFER LOADING
-    def zero_grad(self):
+    def zero_grad(self, set_to_none: bool = True):
         for group in self.param_groups:
             error_feedback = group.get('error_feedback', self.error_feedback)
             if not(group['enable_lowrank']) or not(error_feedback):

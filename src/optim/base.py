@@ -470,6 +470,8 @@ def train(
 
             peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9 if "cuda" in cfg.device else 0.0
             reserved_mem_gb = torch.cuda.memory_reserved() / 1e9 if "cuda" in cfg.device else 0.0
+            # params + optimizer states only (gradients freed by zero_grad above)
+            steady_mem_gb = torch.cuda.memory_allocated() / 1e9 if "cuda" in cfg.device else 0.0
 
             print(
                 f"Train: Iter={curr_iter} ({epoch:0.3f} epochs) "
@@ -493,6 +495,7 @@ def train(
                         "grad_norm": grad_norm,
                         "memory/peak_allocated_gb": peak_mem_gb,
                         "memory/reserved_gb": reserved_mem_gb,
+                        "memory/steady_state_gb": steady_mem_gb,
                     }
                 )
 
