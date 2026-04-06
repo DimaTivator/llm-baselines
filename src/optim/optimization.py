@@ -183,7 +183,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
                 if "mini" in optimizer_name:
                     group["rank"] = args.rank
                 else:
-                    group["rank"] = int(args.density * args.hidden_size)
+                    group["rank"] = int(args.density * args.n_embd)
                 print("\n"*3)
                 print("-"*30)
                 print(f"APOLLO Rank: {group['rank']}")
@@ -200,7 +200,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
         for group in param_groups:
             if group.get("is_proj_params", False):
                 group["enable_lowrank"] = True
-                group["rank"] = int(args.density * args.hidden_size)
+                group["rank"] = int(args.density * args.n_embd)
                 print("\n"*3)
                 print("-"*30)
                 print(f"LDAdam Rank: {group['rank']}")
@@ -217,7 +217,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
     elif optimizer_name == "fira_adamw":
         for group in param_groups:
             if group.get("is_proj_params", False):
-                group["rank"] = int(args.density * args.hidden_size)
+                group["rank"] = int(args.density * args.n_embd)
                 print("\n"*3)
                 print("-"*30)
                 print(f"Fira Rank: {group['rank']}")
@@ -234,7 +234,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
     elif optimizer_name == "galore_adafactor":
         for group in param_groups:
             if group.get("is_proj_params", False):
-                group["rank"] = int(args.density * args.hidden_size)
+                group["rank"] = int(args.density * args.n_embd)
                 print("\n"*3)
                 print("-"*30)
                 print(f"Galore Adafactor Rank: {group['rank']}")
@@ -258,7 +258,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
     elif optimizer_name == "adamem":
         for group in param_groups:
             if group.get("is_proj_params", False):
-                group["rank"] = int(args.density * args.hidden_size)
+                group["rank"] = int(args.density * args.n_embd)
                 print("\n"*3)
                 print("-"*30)
                 print(f"AdaMeM Adafactor Rank: {group['rank']}")
@@ -288,7 +288,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
     elif optimizer_name == "adamem_orig":
         for group in param_groups:
             if group.get("is_proj_params", False):
-                group["rank"] = int(args.density * args.hidden_size)
+                group["rank"] = int(args.density * args.n_embd)
                 print("\n"*3)
                 print("-"*30)
                 print(f"AdaMeM Adafactor Rank: {group['rank']}")
