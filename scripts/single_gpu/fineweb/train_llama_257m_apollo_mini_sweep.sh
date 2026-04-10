@@ -3,6 +3,7 @@ set -euo pipefail
 
 NGPUS=${1:-1}
 DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
+EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-"./evals_cache"}
 RESULTS_DIR=${RESULTS_DIR:-"./exps"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain"}
 
@@ -28,7 +29,7 @@ APOLLO_SCALE_TYPE="tensor"   # tensor-wise scalar = APOLLO-mini
 APOLLO_SCALE=1.0
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
-LR_LIST=(2e-3)
+LR_LIST=(1e-4 5e-4 1e-3 2e-3)
 WD_LIST=(0.1)
 BETA2_LIST=(0.999)
 DTYPE_LIST=(bfloat16)
@@ -49,6 +50,7 @@ for BETA2 in "${BETA2_LIST[@]}"; do
         \
         --dataset fineweb \
         --datasets-dir "${DATASETS_DIR}" \
+        --eval-cache-dir "${EVAL_CACHE_DIR}" \
         --streaming \
         --workers 8 \
         --sequence-length ${SEQ_LEN} \
@@ -82,6 +84,12 @@ for BETA2 in "${BETA2_LIST[@]}"; do
         \
         --eval-interval 500 \
         --eval-batches 32 \
+        --downstream-eval-enabled \
+        --downstream-eval-interval 2000 \
+        --downstream-task-group basic_v2 \
+        --lm-eval-enabled \
+        --lm-eval-interval 2000 \
+        --lm-eval-datasets wikitext103 \
         --log-interval 50 \
         --latest-ckpt-interval 5000 \
         \

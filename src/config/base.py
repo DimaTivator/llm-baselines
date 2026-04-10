@@ -117,6 +117,9 @@ def parse_args(base_parser, args, namespace):
 
     # Dataset
     parser.add_argument("--datasets-dir", type=str, default="./datasets/")
+    parser.add_argument("--eval-cache-dir", type=str, default=None,
+        help="Directory for eval caches (e.g. wikitext103 tokenized data). "
+             "Defaults to --datasets-dir if not set.")
     parser.add_argument(
         "--dataset",
         default="slimpajama",
