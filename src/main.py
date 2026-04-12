@@ -191,6 +191,17 @@ def main(args):
             weight_decay=args.weight_decay,
             qargs=args.qargs,
         )
+    elif args.opt == "triton_coat_adamw":
+        from third_party.coat.optimizer.triton_fp8_adamw import TritonCoatAdamW
+        if args.qargs is None:
+            raise ValueError("triton_coat_adamw requires --fp8-optim (which builds qargs).")
+        opt = TritonCoatAdamW(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            qargs=args.qargs,
+        )
     elif args.opt == "solo_adamw":
         from third_party.solo.adamw import AdamWQ
         opt = AdamWQ(

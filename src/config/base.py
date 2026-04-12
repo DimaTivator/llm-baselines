@@ -75,7 +75,7 @@ def parse_args(base_parser, args, namespace):
         "--opt",
         default="adamw",
         choices=[
-            "adamw", "sgd", "SFAdamW", "coat_adamw",
+            "adamw", "sgd", "SFAdamW", "coat_adamw", "triton_coat_adamw",
             "galore_adamw", "coord_adamw", "block_adamw", "adalayer", "block_adalayer",  # Frugal/Coord/Block
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
             "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
@@ -241,6 +241,19 @@ def parse_args(base_parser, args, namespace):
         default="expand",
         choices=["true", "expand", "false"],
         help="Dynamic range expansion mode for optimizer state quantization.",
+    )
+
+    # ── Training Stabilization ───────────────────────────────────────────
+    parser.add_argument(
+        "--qkv-clipping",
+        action="store_true",
+        help="Clamp Q, K, V activations to [-factor, +factor].",
+    )
+    parser.add_argument(
+        "--qkv-clipping-factor",
+        default=1.0,
+        type=float,
+        help="Clipping bound for QKV activations (default 1.0).",
     )
 
     # Proj parameters (common to many)

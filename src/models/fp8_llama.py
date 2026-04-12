@@ -434,6 +434,8 @@ class FP8LlamaBlock(nn.Module):
         self.n_embd  = config.n_embd
         self.head_dim = config.n_embd // config.n_head
         self.dropout = config.dropout
+        self.qkv_clipping = getattr(config, 'qkv_clipping', False)
+        self.qkv_clipping_factor = getattr(config, 'qkv_clipping_factor', 1.0)
 
         # RMSNorm weights — accessed via .weight by the residual modules
         self.ln_1 = RMSNorm(config.n_embd, eps=config.rmsnorm_eps)
@@ -458,6 +460,11 @@ class FP8LlamaBlock(nn.Module):
         residual, q, k, v = self.before_attn(
             hidden_states, quant_hidden, scale_hidden, self.ln_1.weight
         )
+
+        if self.qkv_clipping:
+            q = q.clamp(min=-self.qkv_clipping_factor, max=self.qkv_clipping_factor)
+            k = k.clamp(min=-self.qkv_clipping_factor, max=self.qkv_clipping_factor)
+            v = v.clamp(min=-self.qkv_clipping_factor, max=self.qkv_clipping_factor)
 
         # Apply RoPE (Quartet-II style: stack-based, compilable)
         k = k.view(B, T, self.n_head, self.head_dim)
