@@ -6,33 +6,22 @@ DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 RESULTS_DIR=${RESULTS_DIR:-"./exps"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain"}
 
-# ─── Model ────────────────────────────────────────────────────────────────────
 N_LAYER=12
 N_EMBD=1024
 N_HEAD=8
 SEQ_LEN=1024
 MULTIPLE_OF=256
 
-# ─── Training ─────────────────────────────────────────────────────────────────
-ITERATIONS=39250
-WARMUP=3925
+ITERATIONS=78500
+WARMUP=7850
 BATCH_SIZE=32
 ACC_STEPS=4
-LR=5e-4
+LR=1e-3
 WEIGHT_DECAY=0.1
 
-# ─── AdEMAMix (paper best: Table 2-3, Sec. 3) ───────────────────────────────
-BETA1=0.9
-BETA2=0.999
-BETA3=0.9999
-ALPHA=8
-BETA3_WARMUP=${ITERATIONS}
-ALPHA_WARMUP=${ITERATIONS}
-
-# ─── Launch ───────────────────────────────────────────────────────────────────
 torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --distributed-backend nccl \
-    --experiment-name "ademamix_lr5e-4_wd0.1" \
+    --experiment-name "soap_lr1e-3_wd0.1_2xC" \
     \
     --dataset fineweb \
     --datasets-dir "${DATASETS_DIR}" \
@@ -47,16 +36,12 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --multiple-of ${MULTIPLE_OF} \
     --dtype bfloat16 \
     \
-    --opt ademamix \
+    --opt soap \
     --lr ${LR} \
     --weight-decay ${WEIGHT_DECAY} \
-    --beta1 ${BETA1} \
-    --beta2 ${BETA2} \
-    --ademamix_beta3 ${BETA3} \
-    --ademamix_alpha ${ALPHA} \
-    --ademamix_beta3_warmup_steps ${BETA3_WARMUP} \
-    --ademamix_alpha_warmup_steps ${ALPHA_WARMUP} \
-    --grad-clip 0.5 \
+    --beta1 0.9 \
+    --beta2 0.99 \
+    --grad-clip 1.0 \
     \
     --scheduler cos \
     --warmup-steps ${WARMUP} \
@@ -79,4 +64,5 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --results-base-folder "${RESULTS_DIR}" \
     --wandb \
     --wandb-project "${WANDB_PROJECT}" \
-    --wandb-tags baseline bf16 ademamix
+    --wandb-group 2xChinchilla \
+    --wandb-tags baseline bf16 soap

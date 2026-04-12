@@ -6,25 +6,22 @@ DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 RESULTS_DIR=${RESULTS_DIR:-"./exps"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain"}
 
-# ─── Model ────────────────────────────────────────────────────────────────────
 N_LAYER=12
 N_EMBD=1024
 N_HEAD=8
 SEQ_LEN=1024
 MULTIPLE_OF=256
 
-# ─── Training ─────────────────────────────────────────────────────────────────
 ITERATIONS=39250
 WARMUP=3925
 BATCH_SIZE=32
 ACC_STEPS=4
-LR=5e-4
+LR=2e-3
 WEIGHT_DECAY=0.1
 
-# ─── Launch ───────────────────────────────────────────────────────────────────
 torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --distributed-backend nccl \
-    --experiment-name "muon_lr5e-4_wd0.1" \
+    --experiment-name "muon_lr2e-3_wd0.1" \
     \
     --dataset fineweb \
     --datasets-dir "${DATASETS_DIR}" \
