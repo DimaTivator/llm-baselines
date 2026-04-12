@@ -65,4 +65,4 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --wandb \
     --wandb-project "${WANDB_PROJECT}" \
     --wandb-group 2xChinchilla \
-    --wandb-tags baseline bf16 adam
+    --wandb-tags baseline bf16 adamw
