@@ -154,7 +154,10 @@ def main(args):
         activation_dtypes = None
 
 
-    model = distributed_backend.transform_model(model)
+    model = distributed_backend.transform_model(
+        model,
+        find_unused_parameters=(args.opt == "badam"),
+    )
 
     # ── Parameter groups ───────────────────────────────────────────────
     if args.opt in ("riemannian_adamw", "riemannian_sgd"):

@@ -6,7 +6,7 @@ class DistributedBackend(object):
     def __init__(self, args):
         pass
 
-    def transform_model(self, model):
+    def transform_model(self, model, **kwargs):
         raise NotImplementedError
 
     def get_context_for_microstep_forward(
