@@ -18,16 +18,6 @@ def get_model(args):
             model.from_pretrained(args.use_pretrained)
         return model
     elif args.model == "llama":
-        model = Llama(args)
-        return model
-    elif args.model == "fp8_llama":
-        from models.fp8_llama import FP8Llama
-        # qargs is built in main.py and stored on args when --fp8 is set
-        if not hasattr(args, "qargs") or args.qargs is None:
-            raise ValueError(
-                "FP8Llama requires --fp8 flag and a QuantizationConfig on args.qargs. "
-                "Pass --fp8 and --fp8-optim to enable FP8 training."
-            )
-        return FP8Llama(args, args.qargs)
+        return Llama(args)
     else:
         raise KeyError(f"Unknown model '{args.model}'.")
