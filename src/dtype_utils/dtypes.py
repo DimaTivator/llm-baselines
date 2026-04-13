@@ -11,13 +11,7 @@ def get_model_classes():
         classes.extend([RMSNorm, LlamaBlock])
     except ImportError:
         pass
-    
-    try:
-        from models.fp8_llama import FP8LlamaBlock
-        classes.append(FP8LlamaBlock)
-    except ImportError:
-        pass
-    
+
     try:
         from models.base import LayerNorm
         classes.append(LayerNorm)

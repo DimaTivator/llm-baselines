@@ -138,7 +138,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument(
         "--model",
         default="llama",
-        choices=["base", "llama", "fp8_llama"],
+        choices=["base", "llama"],
     )
     parser.add_argument("--parallel-block", action="store_true")
     parser.add_argument("--use-pretrained", default="none", type=str)
@@ -163,7 +163,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument(
         "--fp8",
         action="store_true",
-        help="Enable FP8 activation quantization via COAT (requires --model fp8_llama).",
+        help="Enable FP8 activation quantization via COAT on the Llama model.",
     )
     parser.add_argument(
         "--fp8-fabit",

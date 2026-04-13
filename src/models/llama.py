@@ -1,15 +1,13 @@
-"""
-Llama style Language Model that is compilable (avoids torch complex).
-BF16 baseline — uses plain nn.Linear throughout.
-"""
-
 import math
+import sys
+import os
 
 import tiktoken
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from models.base import CausalSelfAttention, GPTBase
+
+from models.base import GPTBase
 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
@@ -22,10 +20,6 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Te
 
 
 def _reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-    """
-    freqs_cis: complex - (seq_len, head_dim / 2)
-    x: complex - (bsz, seq_len, head_dim / 2)
-    """
     ndim = x.ndim
     assert 1 < ndim
     assert freqs_cis.shape[:-1] == (x.shape[1], x.shape[-2])
@@ -36,9 +30,6 @@ def _reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor) -> torch.Te
 
 
 def apply_rotary_emb(q, k, freqs_cis):
-    # q, k: (B, T, nh, hs)
-    # freq_cis: (T, hs)
-    # return: (B, T, nh, hs), (B, T, nh, hs)
     q = q.float().reshape(*q.shape[:-1], -1, 2)
     k = k.float().reshape(*k.shape[:-1], -1, 2)
 
@@ -69,125 +60,261 @@ class RMSNorm(nn.Module):
         return output * self.weight
 
 
-class LlamaMLP(nn.Module):
+def _mlp_hidden_dim(config) -> int:
+    hidden_dim = config.n_embd * 4
+    hidden_dim = int(2 * hidden_dim / 3)
+    hidden_dim = config.multiple_of * (
+        (hidden_dim + config.multiple_of - 1) // config.multiple_of
+    )
+    return hidden_dim
+
+
+class Attention(nn.Module):
     def __init__(self, config):
         super().__init__()
-
-        hidden_dim = config.n_embd * 4
-        hidden_dim = int(2 * hidden_dim / 3)
-        hidden_dim = config.multiple_of * (
-            (hidden_dim + config.multiple_of - 1) // config.multiple_of
-        )
-        self.hidden_dim = hidden_dim
-
-        self.w12 = nn.Linear(config.n_embd, hidden_dim * 2, bias=False)
-        self.c_proj = nn.Linear(hidden_dim, config.n_embd, bias=False)
-
-    def forward(self, x):
-        up, gate = self.w12(x).split(self.hidden_dim, dim=-1)
-        return self.c_proj(nn.functional.silu(up) * gate)
+        head_dim = config.n_embd // config.n_head
+        inner_dim = config.n_head * head_dim
+        self.q_proj = nn.Linear(config.n_embd, inner_dim, bias=False)
+        self.k_proj = nn.Linear(config.n_embd, inner_dim, bias=False)
+        self.v_proj = nn.Linear(config.n_embd, inner_dim, bias=False)
+        self.o_proj = nn.Linear(inner_dim, config.n_embd, bias=False)
 
 
-class LlamaAttention(CausalSelfAttention):
-
+class MLP(nn.Module):
     def __init__(self, config):
-        super().__init__(config)
-        self.qkv_clipping = getattr(config, 'qkv_clipping', False)
-        self.qkv_clipping_factor = getattr(config, 'qkv_clipping_factor', 1.0)
-
-    def forward(self, x, freqs_cis):
-        B, T, C = x.size()
-
-        qkv = self.c_attn(x)
-        if self.qkv_clipping:
-            qkv = qkv.clamp(min=-self.qkv_clipping_factor, max=self.qkv_clipping_factor)
-        q, k, v = qkv.split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head)
-        q = q.view(B, T, self.n_head, C // self.n_head)
-        q, k = apply_rotary_emb(q, k, freqs_cis)
-        q, k = q.transpose(1, 2), k.transpose(1, 2)
-
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-
-        if self.flash:
-            y = torch.nn.functional.scaled_dot_product_attention(
-                q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True
-            )
-        else:
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v
-        y = y.transpose(1, 2).contiguous().view(B, T, C)
-
-        y = self.resid_dropout(self.c_proj(y))
-        return y
+        super().__init__()
+        hidden_dim = _mlp_hidden_dim(config)
+        self.gate_proj = nn.Linear(config.n_embd, hidden_dim, bias=False)
+        self.up_proj   = nn.Linear(config.n_embd, hidden_dim, bias=False)
+        self.down_proj = nn.Linear(hidden_dim, config.n_embd, bias=False)
 
 
 class LlamaBlock(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.ln_1 = RMSNorm(config.n_embd, eps=config.rmsnorm_eps)
-        self.attn = LlamaAttention(config)
-        self.ln_2 = RMSNorm(config.n_embd, eps=config.rmsnorm_eps)
-        self.mlp = LlamaMLP(config)
+    """Unified transformer block. BF16 or FP8 path is selected at runtime."""
 
-    def forward(self, x, freqs_cis):
-        x = x + self.attn(self.ln_1(x), freqs_cis)
-        x = x + self.mlp(self.ln_2(x))
+    def __init__(self, config, qargs=None, layer_idx: int = 0):
+        super().__init__()
+        self.n_head   = config.n_head
+        self.n_embd   = config.n_embd
+        self.head_dim = config.n_embd // config.n_head
+        self.dropout  = config.dropout
+        self.qkv_clipping = getattr(config, "qkv_clipping", False)
+        self.qkv_clipping_factor = getattr(config, "qkv_clipping_factor", 1.0)
+
+        # Canonical construction order — identical across BF16 and FP8:
+        self.ln_1 = RMSNorm(config.n_embd, eps=config.rmsnorm_eps)
+        self.attn = Attention(config)
+        self.ln_2 = RMSNorm(config.n_embd, eps=config.rmsnorm_eps)
+        self.mlp  = MLP(config)
+
+        # FP8-only cache — adds no nn.Parameter / nn.Linear children, so it
+        # cannot perturb seed parity or optimizer-facing parameter structure.
+        self.fp8 = qargs is not None
+        if self.fp8:
+            # Lazy import so BF16 runs don't require triton/COAT deps.
+            from third_party.coat.utils._fp8_weightcache import FP8CacheWeightModule
+
+            self.qargs = qargs
+            self.fwobits = {
+                "fabit": qargs.fabit, "fwbit": qargs.fwbit, "fobit": qargs.fobit,
+                "babit": qargs.babit, "bwbit": qargs.bwbit, "bobit": qargs.bobit,
+            }
+            self.fp8_cache = FP8CacheWeightModule(None, qargs, layer_idx)
+            # prepare_weight() reads self.fp8_cache.fwobits["fwbit"] internally.
+            self.fp8_cache.fwobits = self.fwobits
+
+    def _project_qkv(self, x):
+        B, T, C = x.size()
+        x_norm = self.ln_1(x)
+        q = self.attn.q_proj(x_norm)
+        k = self.attn.k_proj(x_norm)
+        v = self.attn.v_proj(x_norm)
+
+        if self.qkv_clipping:
+            c = self.qkv_clipping_factor
+            q = q.clamp(min=-c, max=c)
+            k = k.clamp(min=-c, max=c)
+            v = v.clamp(min=-c, max=c)
+
+        return x_norm, q, k, v
+
+    def _non_fp8_forward(self, x, freqs_cis):
+        B, T, C = x.size()
+        _, q, k, v = self._project_qkv(x)
+
+        q = q.view(B, T, self.n_head, self.head_dim)
+        k = k.view(B, T, self.n_head, self.head_dim)
+        q, k = apply_rotary_emb(q, k, freqs_cis)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        y = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=None,
+            dropout_p=self.dropout if self.training else 0.0,
+            is_causal=True,
+        )
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        x = x + self.attn.o_proj(y)
+
+        h = self.ln_2(x)
+        x = x + self.mlp.down_proj(F.silu(self.mlp.gate_proj(h)) * self.mlp.up_proj(h))
         return x
+
+    def _fp8_forward(self, x, Qx, Sx, freqs_cis):
+        from third_party.coat.utils._fp8manager import FP8Manager
+        from models._fp8_ops import (
+            FP8BeforeAttentionResidual,
+            FP8AfterAttentionResidual,
+            FP8MLPResidual,
+        )
+
+        B, T, C = x.size()
+        is_first = FP8Manager.is_first_microbatch
+        gs = self.qargs.group_size
+
+        with torch.no_grad():
+            w_q_s = self.fp8_cache.prepare_weight(self.attn.q_proj.weight, "q_proj", is_first)
+            w_k_s = self.fp8_cache.prepare_weight(self.attn.k_proj.weight, "k_proj", is_first)
+            w_v_s = self.fp8_cache.prepare_weight(self.attn.v_proj.weight, "v_proj", is_first)
+            w_o_s = self.fp8_cache.prepare_weight(self.attn.o_proj.weight, "o_proj", is_first)
+            w_g_s = self.fp8_cache.prepare_weight(self.mlp.gate_proj.weight, "gate_proj", is_first)
+            w_u_s = self.fp8_cache.prepare_weight(self.mlp.up_proj.weight,   "up_proj",   is_first)
+            w_d_s = self.fp8_cache.prepare_weight(self.mlp.down_proj.weight, "down_proj", is_first)
+
+        residual, q, k, v = FP8BeforeAttentionResidual.apply(
+            x, Qx, Sx,
+            self.attn.q_proj.weight, None, None, w_q_s,
+            self.attn.k_proj.weight, None, None, w_k_s,
+            self.attn.v_proj.weight, None, None, w_v_s,
+            self.ln_1.weight,
+            gs, self.fwobits, self.qargs,
+        )
+
+        if self.qkv_clipping:
+            c = self.qkv_clipping_factor
+            q = q.clamp(min=-c, max=c)
+            k = k.clamp(min=-c, max=c)
+            v = v.clamp(min=-c, max=c)
+
+        q = q.view(B, T, self.n_head, self.head_dim)
+        k = k.view(B, T, self.n_head, self.head_dim)
+        q, k = apply_rotary_emb(q, k, freqs_cis)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        attn_out = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=None,
+            dropout_p=self.dropout if self.training else 0.0,
+            is_causal=True,
+        )
+        attn_out = attn_out.transpose(1, 2).contiguous().view(B, T, C)
+
+        hidden, Qx, Sx = FP8AfterAttentionResidual.apply(
+            residual, attn_out,
+            self.attn.o_proj.weight, None, None, w_o_s,
+            gs, self.fwobits, self.qargs,
+        )
+
+        hidden, Qx, Sx = FP8MLPResidual.apply(
+            hidden, Qx, Sx,
+            self.mlp.gate_proj.weight, None, None, w_g_s,
+            self.mlp.up_proj.weight,   None, None, w_u_s,
+            self.mlp.down_proj.weight, None, None, w_d_s,
+            self.ln_2.weight,
+            gs, self.fwobits, self.qargs,
+        )
+
+        return hidden, Qx, Sx
+
+    def forward(self, x, Qx, Sx, freqs_cis):
+        if self.fp8 and self.training:
+            return self._fp8_forward(x, Qx, Sx, freqs_cis)
+        return self._non_fp8_forward(x, freqs_cis), None, None
 
 
 class Llama(GPTBase):
     def __init__(self, config):
-        super().__init__(config)
+        nn.Module.__init__(self)
         assert config.vocab_size is not None
         assert config.sequence_length is not None
         self.config = config
+        self.fp8 = bool(getattr(config, "fp8", False))
+        qargs = getattr(config, "qargs", None) if self.fp8 else None
+        if self.fp8:
+            assert qargs is not None, (
+                "Llama with --fp8 requires a QuantizationConfig on args.qargs "
+                "(built by src/main.py when --fp8 is passed)."
+            )
+        self.qargs = qargs
         self.tokenizer = tiktoken.get_encoding("gpt2")
 
-        self.head_dim = config.n_embd // config.n_head
+        self.head_dim  = config.n_embd // config.n_head
         self.freqs_cis = precompute_freqs_cis(self.head_dim, config.sequence_length)
 
-        self.transformer = nn.ModuleDict(
-            dict(
-                wte=nn.Embedding(config.vocab_size, config.n_embd),
-                drop=nn.Dropout(config.dropout),
-                h=nn.ModuleList([LlamaBlock(config) for _ in range(config.n_layer)]),
-                ln_f=RMSNorm(config.n_embd, eps=config.rmsnorm_eps),
-            )
-        )
-
+        self.transformer = nn.ModuleDict(dict(
+            wte  = nn.Embedding(config.vocab_size, config.n_embd),
+            drop = nn.Dropout(config.dropout),
+            h    = nn.ModuleList([
+                LlamaBlock(config, qargs, i) for i in range(config.n_layer)
+            ]),
+            ln_f = RMSNorm(config.n_embd, eps=config.rmsnorm_eps),
+        ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-        # init all weights
+        # Init after shared parameters are constructed. FP8-only modules below
+        # have no nn.Parameter children and are registered afterwards so they
+        # cannot perturb RNG consumption.
         self.apply(self._init_weights)
-        # apply special scaled init to the residual projections, per GPT-2 paper
         for pn, p in self.named_parameters():
-            if pn.endswith("c_proj.weight"):
+            if pn.endswith("o_proj.weight") or pn.endswith("down_proj.weight"):
                 torch.nn.init.normal_(
-                    p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer)
+                    p, mean=0.0,
+                    std=self.config.init_std / math.sqrt(2 * config.n_layer),
                 )
 
+        if self.fp8:
+            from third_party.coat.activation.real_quantization import (
+                Coat_quantize_bgn, Coat_quantize_end,
+            )
+            self.quantize_input  = Coat_quantize_bgn(qargs)
+            self.quantize_output = Coat_quantize_end(qargs)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.init_std)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.init_std)
+
     def get_num_params(self, non_embedding=True):
-        n_params = sum(p.numel() for p in self.parameters())
-        return n_params
+        return sum(p.numel() for p in self.parameters())
 
     def forward(self, idx, targets=None, get_logits=False):
         device = idx.device
         b, t = idx.size()
-        assert (
-            t <= self.config.sequence_length
-        ), f"Cannot forward sequence of length {t}, block size is only {self.config.sequence_length}"
+        assert t <= self.config.sequence_length, (
+            f"Cannot forward sequence of length {t}, "
+            f"block size is only {self.config.sequence_length}"
+        )
         pos = torch.arange(0, t, dtype=torch.long, device=device)
 
-        tok_emb = self.transformer.wte(idx)
-        x = self.transformer.drop(tok_emb)
+        x = self.transformer.drop(self.transformer.wte(idx))
         freqs_cis = self.freqs_cis.to(x.device)[pos]
 
+        if self.fp8:
+            x, Qx, Sx = self.quantize_input(x)
+        else:
+            Qx, Sx = None, None
+
         for block in self.transformer.h:
-            x = block(x, freqs_cis=freqs_cis)
+            x, Qx, Sx = block(x, Qx, Sx, freqs_cis)
+
+        if self.fp8:
+            x = self.quantize_output(x, Qx, Sx)
+
         x = self.transformer.ln_f(x)
 
         if targets is not None:
@@ -199,9 +326,7 @@ class Llama(GPTBase):
             logits = self.lm_head(x[:, [-1], :])
             loss = None
 
-        logits = logits if get_logits else None
-
         return {
-            "logits": logits,
+            "logits": logits if get_logits else None,
             "loss": loss,
         }
