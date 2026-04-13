@@ -3,6 +3,7 @@ set -euo pipefail
 
 NGPUS=${1:-1}
 DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
+EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-"./evals_cache"}
 RESULTS_DIR=${RESULTS_DIR:-"./exps"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain"}
 
@@ -32,6 +33,7 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     \
     --dataset fineweb \
     --datasets-dir "${DATASETS_DIR}" \
+    --eval-cache-dir "${EVAL_CACHE_DIR}" \
     --sequence-length ${SEQ_LEN} \
     --streaming \
     --workers 8 \

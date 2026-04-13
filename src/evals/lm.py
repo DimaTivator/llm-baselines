@@ -144,7 +144,7 @@ class AuxiliaryLMEvaluator:
                     f"Unsupported LM eval dataset '{dataset_name}'. Only 'wikitext103' is implemented."
                 )
             val_bin_path = _prepare_wikitext103_cache(
-                self.cfg.datasets_dir,
+                self.cfg.eval_cache_dir or self.cfg.datasets_dir,
                 self.cfg,
                 self.tokenizer,
             )

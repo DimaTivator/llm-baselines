@@ -39,8 +39,8 @@ class DataParallelDistributedBackend(DistributedBackend):
         args.data_seed = args.data_seed
         return args
 
-    def transform_model(self, model):
-        return DDP(model, device_ids=[self.local_rank])
+    def transform_model(self, model, **kwargs):
+        return DDP(model, device_ids=[self.local_rank], **kwargs)
 
     @contextmanager
     def get_context_for_microstep_forward(

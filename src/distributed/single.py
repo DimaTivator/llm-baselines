@@ -9,7 +9,7 @@ class SinlgeNodeBackend(DistributedBackend):
         super().__init__(args)
         self.rank = 0
 
-    def transform_model(self, model):
+    def transform_model(self, model, **kwargs):
         return model
 
     def get_context_for_microstep_forward(self, *args, **kwargs):
