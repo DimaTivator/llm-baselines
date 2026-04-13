@@ -29,7 +29,7 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --streaming \
     --workers 8 \
     \
-    --model fp8_llama \
+    --model llama \
     --n-layer ${N_LAYER} \
     --n-embd ${N_EMBD} \
     --n-head ${N_HEAD} \
