@@ -4,6 +4,7 @@ from typing import Dict, Union
 import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer
+import os
 
 from .shakespeare import get_shakespeare_data
 from .wikitext import get_wikitext_data
@@ -75,6 +76,8 @@ def get_dataset(args) -> Union[Dict[str, np.ndarray], Dict[str, any]]:
     if args.dataset == "c4":
         return get_c4_data(args.datasets_dir, args, 128)
     if args.dataset in ("fineweb", "fineweb-edu"):
+        if "INPUT_PATH" in os.environ:
+            args.datasets_dir = os.environ["INPUT_PATH"]
         return get_fineweb_data(args.datasets_dir, args, 128)
     else:
         raise NotImplementedError(f"Unknown dataset key '{args.dataset}'")
