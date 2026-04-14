@@ -46,21 +46,36 @@ def get_fineweb_data_streaming(datasets_dir, args):
     val_examples_needed = int(eval_batch_size * eval_batches)
 
     if os.path.isdir(datasets_dir):
+        print("====== Searching for files =======")
         data_files_list = _find_data_files(datasets_dir)
+        print('\n' * 2)
+        print("====== Files =======")
+        print(len(data_files_list))
+        print('\n' * 2)
+        print("======== Data Format =======")
         fmt = _detect_format(data_files_list)
+        print(fmt)
+        print('\n' * 2)
         data_files = {"train": data_files_list}
 
         # Shuffle before split so val gets random examples, not just the
         # first N in file order. take/skip are lazy and don't share state.
+        print("====== Shuffling =========")
         shuffled = datasets.load_dataset(
             fmt, data_files=data_files, split='train', streaming=True
         ).shuffle(seed=2357, buffer_size=10_000)
+        print('\n' * 2)
 
+        print("======= Train and Val =========")
         val_dataset = shuffled.take(val_examples_needed)
         train_dataset = shuffled.skip(val_examples_needed)
+        print(f"Len Val: {len(val_dataset)}")
+        print(f"Len Train: {len(train_dataset)}")
+        print('\n' * 2)
 
         # Heuristic: ~4 bytes per token for English text in raw JSON/parquet
         estimated_tokens = sum(os.path.getsize(f) for f in data_files_list) // 4
+        print(f"Estimated tokens: {estimated_tokens}")
     else:
         print(f"{datasets_dir} not found locally, streaming FineWeb-Edu ({FINEWEB_VARIANT}) from HuggingFace...")
         shuffled = datasets.load_dataset(
