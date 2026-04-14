@@ -14,11 +14,11 @@ SEQ_LEN=1024
 MULTIPLE_OF=256
 
 ITERATIONS=39250
-WARMUP=3925
+WARMUP=98 # 0.25%
 BATCH_SIZE=32
 ACC_STEPS=4
 LR=1e-3
-WEIGHT_DECAY=0.1
+WEIGHT_DECAY=1e-4
 
 BETA1=0.9
 BETA2=0.999
@@ -56,7 +56,7 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --ademamix_alpha_warmup_steps ${ALPHA_WARMUP} \
     --grad-clip 0.5 \
     \
-    --scheduler cos \
+    --scheduler cos_warmup_zero \
     --warmup-steps ${WARMUP} \
     --iterations ${ITERATIONS} \
     \
