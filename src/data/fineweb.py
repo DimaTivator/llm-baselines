@@ -69,8 +69,8 @@ def get_fineweb_data_streaming(datasets_dir, args):
         print("======= Train and Val =========")
         val_dataset = shuffled.take(val_examples_needed)
         train_dataset = shuffled.skip(val_examples_needed)
-        print(f"Len Val: {len(val_dataset)}")
-        print(f"Len Train: {len(train_dataset)}")
+        # print(f"Len Val: {len(val_dataset)}")
+        # print(f"Len Train: {len(train_dataset)}")
         print('\n' * 2)
 
         # Heuristic: ~4 bytes per token for English text in raw JSON/parquet
