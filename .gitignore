@@ -6,6 +6,11 @@ cluster/
 assets/*.csv
 assets/*.json
 logs/
+docs/
+research/
+.claude/
+.qwen/
+.codex/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
