@@ -17,3 +17,8 @@ wandb
 # SOLO
 # (!) depends on the torch version: https://github.com/pytorch/ao/issues/2919
 torchao
+
+# part of muon-lite; could be remove in the future
+loguru
+
+bitsandbytes
