@@ -63,7 +63,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument(
         "--scheduler",
         default="cos",
-        choices=["linear", "cos", "wsd", "none", "cos_inf", "cos_zero"],
+        choices=["linear", "cos", "wsd", "none", "cos_inf", "cos_zero", "cos_warmup_zero"],
     )
     parser.add_argument("--cos-inf-steps", default=0, type=int)
     parser.add_argument("--iterations", default=15000, type=int)

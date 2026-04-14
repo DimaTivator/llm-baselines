@@ -127,6 +127,23 @@ def wsd_schedule(
     return schedule
 
 
+def cos_warmup_zero_schedule(n_iterations, n_warmup):
+    """Linear warmup followed by cosine decay to zero."""
+    if n_warmup >= n_iterations:
+        raise ValueError("Warmup steps must be < total scheduler steps.")
+
+    def schedule(step):
+        if n_warmup > 0 and step < n_warmup:
+            return step / n_warmup
+        if step >= n_iterations:
+            return 0.0
+
+        t = (step - n_warmup) / (n_iterations - n_warmup)
+        return 0.5 * (1 + np.cos(np.pi * t))
+
+    return schedule
+
+
 def build_scheduler(opt, args, total_steps=None):
     total_steps = args.iterations if total_steps is None else total_steps
 
@@ -159,6 +176,13 @@ def build_scheduler(opt, args, total_steps=None):
             T_max=total_steps,
             eta_min=0.0,
         )
+
+    if args.scheduler == "cos_warmup_zero":
+        lambda_schedule = cos_warmup_zero_schedule(
+            n_iterations=total_steps,
+            n_warmup=args.warmup_steps,
+        )
+        return torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
 
     if args.scheduler == "cos_inf":
         assert args.warmup_steps < total_steps, "Warmup steps must be < total scheduler steps."

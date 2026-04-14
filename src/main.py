@@ -361,6 +361,11 @@ def main(args):
         raise ValueError(
             "--decay-from-checkpoint requires --resume-from or an auto-resume checkpoint."
         )
+    if args.decay_from_checkpoint and args.warmup_steps != 0:
+        raise ValueError(
+            "--decay-from-checkpoint requires --warmup-steps 0 so the rebuilt scheduler "
+            "starts from the checkpoint LR."
+        )
 
     # ── Train ─────────────────────────────────────────────────────────────
     stats = train(
