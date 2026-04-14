@@ -127,6 +127,65 @@ def wsd_schedule(
     return schedule
 
 
+def build_scheduler(opt, args, total_steps=None):
+    total_steps = args.iterations if total_steps is None else total_steps
+
+    if args.scheduler == "none":
+        return None
+
+    if total_steps <= 0:
+        raise ValueError(f"Scheduler requires a positive number of steps, got {total_steps}.")
+
+    if args.scheduler in ["cos", "linear"]:
+        assert args.warmup_steps < total_steps, "Warmup steps must be < total scheduler steps."
+        return torch.optim.lr_scheduler.OneCycleLR(
+            optimizer=opt,
+            max_lr=[group.get("lr", args.lr) for group in opt.param_groups],
+            total_steps=total_steps,
+            pct_start=args.warmup_steps / total_steps,
+            anneal_strategy=args.scheduler,
+            cycle_momentum=False,
+            div_factor=1e2,
+            final_div_factor=0.1,
+        )
+
+    if args.scheduler == "cos_zero":
+        if args.warmup_steps != 0:
+            raise ValueError(
+                "--scheduler cos_zero does not support warmup. Set --warmup-steps 0."
+            )
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer=opt,
+            T_max=total_steps,
+            eta_min=0.0,
+        )
+
+    if args.scheduler == "cos_inf":
+        assert args.warmup_steps < total_steps, "Warmup steps must be < total scheduler steps."
+        lambda_schedule = cos_inf_schedule(
+            n_iterations=total_steps,
+            n_warmup=args.warmup_steps,
+            n_inf=args.cos_inf_steps,
+            div_factor=1e2,
+            final_div_factor=0.1,
+        )
+        return torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
+
+    if args.scheduler == "wsd":
+        assert args.warmup_steps < total_steps, "Warmup steps must be < total scheduler steps."
+        lambda_schedule = wsd_schedule(
+            n_iterations=total_steps,
+            n_warmup=args.warmup_steps,
+            fract_decay=args.wsd_fract_decay,
+            init_div_factor=1e2,
+            final_lr_factor=args.wsd_final_lr_scale,
+            decay_type=args.decay_type,
+        )
+        return torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
+
+    raise NotImplementedError(f"Unknown scheduler: {args.scheduler}.")
+
+
 @torch.no_grad()
 def eval(
     model,
@@ -249,21 +308,32 @@ def save_checkpoint(model, opt, scheduler, itr, ckpt_dir: Path):
     checkpoint = {
         "model": model.state_dict(),
         "optimizer": opt.state_dict(),
-        "scheduler": scheduler.state_dict(),
+        "scheduler": scheduler.state_dict() if scheduler is not None else None,
         "itr": itr,
     }
     ckpt_dir.mkdir(exist_ok=True, parents=True)
     torch.save(checkpoint, ckpt_dir / "main.pt")
 
 
-def load_checkpoint(model, opt, scheduler, ckpt_path, device):
+def load_checkpoint(
+    model,
+    opt,
+    scheduler,
+    ckpt_path,
+    device,
+    *,
+    load_optimizer=True,
+    load_scheduler=True,
+):
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         model = model.module
 
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"])
-    opt.load_state_dict(ckpt["optimizer"])
-    scheduler.load_state_dict(ckpt["scheduler"])
+    if load_optimizer and opt is not None and ckpt.get("optimizer") is not None:
+        opt.load_state_dict(ckpt["optimizer"])
+    if load_scheduler and scheduler is not None and ckpt.get("scheduler") is not None:
+        scheduler.load_state_dict(ckpt["scheduler"])
     itr = ckpt["itr"]
     return itr
 

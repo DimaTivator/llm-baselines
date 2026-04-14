@@ -24,6 +24,7 @@ from optim.weight_averaging import (
     ExponentialWeightAverager,
 )
 from .utils import (
+    build_scheduler,
     eval,
     get_batch,
     load_checkpoint,
@@ -64,9 +65,10 @@ def train(
         type_ctx = nullcontext()
 
     if cfg.resume_from:
-        # This is a full resume including the model weights, optimizer, state
-        # dataloader state, random seed, etc. Not indended for fine tuning or
-        # other scenarios where some of these should change.
+        # By default this is a full resume including the model weights,
+        # optimizer, scheduler, dataloader state, random seed, etc.
+        # --decay-from-checkpoint keeps the same continuation point but
+        # rebuilds the scheduler from the checkpoint LR.
         print(f"\nResuming Training From {cfg.resume_from}")
         ckpt_dir = Path(cfg.resume_from)
         curr_iter = load_checkpoint(
@@ -75,8 +77,17 @@ def train(
             scheduler,
             ckpt_dir / "main.pt",
             cfg.device,
+            load_scheduler=not cfg.decay_from_checkpoint,
         )
         load_worker_state(ckpt_dir)
+        if cfg.decay_from_checkpoint:
+            remaining_steps = cfg.iterations - curr_iter
+            if remaining_steps <= 0:
+                raise ValueError(
+                    f"--decay-from-checkpoint requires target --iterations ({cfg.iterations}) "
+                    f"to be greater than checkpoint iteration ({curr_iter})."
+                )
+            scheduler = build_scheduler(opt, cfg, total_steps=remaining_steps)
     else:
         curr_iter = 0
 
@@ -389,7 +400,8 @@ def train(
         if _time_bench:
             torch.cuda.synchronize()
             _tb5 = time.perf_counter_ns()
-        scheduler.step()
+        if scheduler is not None:
+            scheduler.step()
         opt.zero_grad(set_to_none=True)
         if cfg.weight_average:
             weight_averager.step(

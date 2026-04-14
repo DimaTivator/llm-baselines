@@ -22,7 +22,7 @@ import distributed
 from evals import build_evaluators
 from models.utils import get_model
 from optim.base import train
-from optim.utils import cos_inf_schedule, wsd_schedule
+from optim.utils import build_scheduler
 from optim.optimization import get_optimizer
 
 from data.streaming_reader import StreamingDataReader
@@ -343,42 +343,7 @@ def main(args):
         print_memory_usage(distributed_backend, args.device, label="After Init")
 
     # ── LR scheduler ──────────────────────────────────────────────────────
-    if args.scheduler != "none":
-        assert args.warmup_steps < args.iterations, "Warmup steps must be < iterations."
-        if args.scheduler in ["cos", "linear"]:
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(
-                optimizer=opt,
-                max_lr=[group.get("lr", args.lr) for group in opt.param_groups],
-                total_steps=args.iterations,
-                pct_start=args.warmup_steps / args.iterations,
-                anneal_strategy=args.scheduler,
-                cycle_momentum=False,
-                div_factor=1e2,
-                final_div_factor=0.1,
-            )
-        elif args.scheduler == "cos_inf":
-            lambda_schedule = cos_inf_schedule(
-                n_iterations=args.iterations,
-                n_warmup=args.warmup_steps,
-                n_inf=args.cos_inf_steps,
-                div_factor=1e2,
-                final_div_factor=0.1,
-            )
-            scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
-        elif args.scheduler == "wsd":
-            lambda_schedule = wsd_schedule(
-                n_iterations=args.iterations,
-                n_warmup=args.warmup_steps,
-                fract_decay=args.wsd_fract_decay,
-                init_div_factor=1e2,
-                final_lr_factor=args.wsd_final_lr_scale,
-                decay_type=args.decay_type,
-            )
-            scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
-        else:
-            raise NotImplementedError(f"Unknown scheduler: {args.scheduler}.")
-    else:
-        scheduler = None
+    scheduler = build_scheduler(opt, args)
 
     # ── Auto-resume ───────────────────────────────────────────────────────
     if exp_dir is not None and (exp_dir / "ckpts" / "latest" / "main.pt").exists():
@@ -391,6 +356,11 @@ def main(args):
             args.resume_from = str(exp_dir / "ckpts" / "latest")
     elif distributed_backend.is_master_process() and exp_dir is not None:
         exp_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.decay_from_checkpoint and args.resume_from is None:
+        raise ValueError(
+            "--decay-from-checkpoint requires --resume-from or an auto-resume checkpoint."
+        )
 
     # ── Train ─────────────────────────────────────────────────────────────
     stats = train(
