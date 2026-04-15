@@ -14,11 +14,11 @@ SEQ_LEN=1024
 MULTIPLE_OF=256
 
 ITERATIONS=39250
-WARMUP=98 # 0.25%
+WARMUP=1963 # ~= 5%
 BATCH_SIZE=32
 ACC_STEPS=4
 LR=1e-3
-WEIGHT_DECAY=1e-4
+WEIGHT_DECAY=0.1
 
 torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --distributed-backend nccl \
