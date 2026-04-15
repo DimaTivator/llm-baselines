@@ -16,7 +16,7 @@ ITERATIONS=39250
 WARMUP=3925
 BATCH_SIZE=32
 ACC_STEPS=4
-LR=2e-3
+LR=1e-3
 WEIGHT_DECAY=0.1
 
 torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
