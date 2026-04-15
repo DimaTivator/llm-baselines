@@ -34,6 +34,54 @@ from dtype_utils.dtypes import (
 )
 
 
+def validate_checkpoint_args(args):
+    if args.delete_local_inter_ckpts_after_upload and not args.upload_inter_ckpts_to_wandb:
+        raise ValueError(
+            "--delete-local-inter-ckpts-after-upload requires "
+            "--upload-inter-ckpts-to-wandb."
+        )
+
+    if args.upload_inter_ckpts_to_wandb and not args.wandb:
+        raise ValueError("--upload-inter-ckpts-to-wandb requires --wandb.")
+
+    inter_ckpts = [] if args.inter_ckpts is None else args.inter_ckpts
+    if not inter_ckpts:
+        if args.upload_inter_ckpts_to_wandb:
+            raise ValueError("--upload-inter-ckpts-to-wandb requires --inter-ckpts.")
+        if args.delete_local_inter_ckpts_after_upload:
+            raise ValueError(
+                "--delete-local-inter-ckpts-after-upload requires --inter-ckpts."
+            )
+        args.inter_ckpts = []
+        return
+
+    if args.permanent_ckpt_interval > 0:
+        raise ValueError(
+            "--inter-ckpts is mutually exclusive with --permanent-ckpt-interval."
+        )
+
+    if args.no_local_save:
+        raise ValueError("--inter-ckpts requires local checkpoint saving.")
+
+    last_step = None
+    seen_steps = set()
+    for step in inter_ckpts:
+        if step <= 0:
+            raise ValueError("--inter-ckpts must contain only positive iterations.")
+        if step > args.iterations:
+            raise ValueError(
+                f"--inter-ckpts step {step} exceeds --iterations ({args.iterations})."
+            )
+        if step in seen_steps:
+            raise ValueError("--inter-ckpts must be unique.")
+        if last_step is not None and step <= last_step:
+            raise ValueError("--inter-ckpts must be sorted in strictly increasing order.")
+        seen_steps.add(step)
+        last_step = step
+
+    args.inter_ckpts = inter_ckpts
+
+
 def main(args):
     distributed_backend = distributed.make_backend_from_args(args)
     args = distributed_backend.get_adjusted_args_for_process(args)
@@ -41,6 +89,7 @@ def main(args):
 
     if args.full_eval_at is None:
         args.full_eval_at = []
+    validate_checkpoint_args(args)
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True

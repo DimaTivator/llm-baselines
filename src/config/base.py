@@ -34,7 +34,30 @@ def parse_args(base_parser, args, namespace):
     # Checkpointing
     parser.add_argument("--results-base-folder", default="./exps", type=str)
     parser.add_argument("--permanent-ckpt-interval", default=0, type=int)
+    parser.add_argument(
+        "--inter-ckpts",
+        nargs="+",
+        default=None,
+        type=int,
+        help=(
+            "Explicit intermediate checkpoint iterations. Mutually exclusive with "
+            "--permanent-ckpt-interval."
+        ),
+    )
     parser.add_argument("--latest-ckpt-interval", default=0, type=int)
+    parser.add_argument(
+        "--upload-inter-ckpts-to-wandb",
+        action="store_true",
+        help="Upload checkpoints from --inter-ckpts to W&B artifacts.",
+    )
+    parser.add_argument(
+        "--delete-local-inter-ckpts-after-upload",
+        action="store_true",
+        help=(
+            "Delete a local checkpoint from --inter-ckpts after a successful W&B "
+            "artifact upload. Requires --upload-inter-ckpts-to-wandb."
+        ),
+    )
     parser.add_argument("--resume-from", default=None, type=str)
     parser.add_argument(
         "--decay-from-checkpoint",

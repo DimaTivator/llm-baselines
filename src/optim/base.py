@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 import copy
+import shutil
 from pathlib import Path
 import time
 import yaml
@@ -32,6 +33,42 @@ from .utils import (
     save_checkpoint,
     save_worker_state,
 )
+
+
+def _sanitize_wandb_artifact_name(value):
+    return "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in value)
+
+
+def _get_inter_ckpt_artifact_name(curr_iter):
+    if wandb.run is None:
+        raise RuntimeError("W&B run is not initialized for intermediate checkpoint upload.")
+
+    run_group = wandb.run.group or "ungrouped"
+    return _sanitize_wandb_artifact_name(
+        f"{run_group}-{wandb.run.name}-inter-ckpt-{curr_iter}"
+    )
+
+
+def _upload_inter_ckpt_to_wandb(ckpt_dir: Path, curr_iter: int, cfg):
+    if wandb.run is None:
+        raise RuntimeError("W&B run is not initialized for intermediate checkpoint upload.")
+
+    artifact_name = _get_inter_ckpt_artifact_name(curr_iter)
+    artifact = wandb.Artifact(
+        name=artifact_name,
+        type="checkpoint",
+        description="Intermediate training checkpoint.",
+        metadata={
+            "iteration": curr_iter,
+            "experiment_name": cfg.experiment_name,
+            "wandb_group": wandb.run.group,
+            "wandb_run_id": wandb.run.id,
+        },
+    )
+    artifact.add_dir(str(ckpt_dir))
+    wandb.run.log_artifact(artifact)
+    artifact.wait()
+    return artifact_name
 
 
 def train(
@@ -144,6 +181,7 @@ def train(
         "downstream": [],
         "aux_lm": [],
     }
+    inter_ckpt_steps = set(cfg.inter_ckpts)
     model.train()
 
     # Initialize the progress bar
@@ -195,15 +233,45 @@ def train(
 
     while curr_iter <= cfg.iterations:
         # Save permanent checkpoint
-        if cfg.permanent_ckpt_interval > 0 and exp_dir is not None:
+        if curr_iter > 0 and cfg.permanent_ckpt_interval > 0 and exp_dir is not None:
             if curr_iter % cfg.permanent_ckpt_interval == 0:
                 ckpt_dir = exp_dir / "ckpts" / str(curr_iter)
                 if distributed_backend.is_master_process():
                     save_checkpoint(model, opt, scheduler, curr_iter, ckpt_dir)
                 save_worker_state(ckpt_dir)
 
+        # Save explicit intermediate checkpoints
+        if curr_iter > 0 and curr_iter in inter_ckpt_steps and exp_dir is not None:
+            ckpt_dir = exp_dir / "ckpts" / str(curr_iter)
+            if distributed_backend.is_master_process():
+                save_checkpoint(model, opt, scheduler, curr_iter, ckpt_dir)
+            save_worker_state(ckpt_dir)
+
+            if cfg.upload_inter_ckpts_to_wandb:
+                distributed_backend.barrier()
+                if distributed_backend.is_master_process():
+                    artifact_name = _get_inter_ckpt_artifact_name(curr_iter)
+                    try:
+                        artifact_name = _upload_inter_ckpt_to_wandb(ckpt_dir, curr_iter, cfg)
+                        print(
+                            f"Uploaded intermediate checkpoint at iter {curr_iter} "
+                            f"to W&B artifact '{artifact_name}'."
+                        )
+                        if cfg.delete_local_inter_ckpts_after_upload:
+                            shutil.rmtree(ckpt_dir)
+                            print(
+                                f"Deleted local intermediate checkpoint after upload: {ckpt_dir}"
+                            )
+                    except Exception as exc:
+                        print(
+                            f"WARNING: failed to upload intermediate checkpoint at iter "
+                            f"{curr_iter} to W&B artifact '{artifact_name}'. Keeping local "
+                            f"checkpoint at {ckpt_dir}. Error: {exc}"
+                        )
+                distributed_backend.barrier()
+
         # Save temporary checkpoint for resuming training
-        if cfg.latest_ckpt_interval > 0 and exp_dir is not None:
+        if curr_iter > 0 and cfg.latest_ckpt_interval > 0 and exp_dir is not None:
             if curr_iter % cfg.latest_ckpt_interval == 0 or curr_iter == cfg.iterations:
                 ckpt_dir = exp_dir / "ckpts" / "latest"
                 if distributed_backend.is_master_process():
