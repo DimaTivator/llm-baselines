@@ -18,7 +18,7 @@ WARMUP=2000
 WSD_FRACT_DECAY=0.1
 WSD_FINAL_LR_SCALE=0.0
 DECAY_TYPE=cosine
-PERMANENT_CKPT_INTERVAL=35325
+INTER_CKPTS=(35325 70650 105975)
 BATCH_SIZE=32
 ACC_STEPS=4
 LR=1e-3
@@ -68,8 +68,10 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --lm-eval-interval 2000 \
     --lm-eval-datasets wikitext103 \
     --log-interval 50 \
-    --permanent-ckpt-interval ${PERMANENT_CKPT_INTERVAL} \
+    --inter-ckpts "${INTER_CKPTS[@]}" \
     --latest-ckpt-interval 5000 \
+    --upload-inter-ckpts-to-wandb \
+    --delete-local-inter-ckpts-after-upload \
     \
     --results-base-folder "${RESULTS_DIR}" \
     --wandb \
