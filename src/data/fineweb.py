@@ -34,21 +34,6 @@ def _resolve_dataset_root(datasets_dir: str) -> Path:
     return dataset_root
 
 
-def _manifest_index(manifest: Manifest) -> dict[str, int]:
-    return {shard.relative_path: index for index, shard in enumerate(manifest.shards)}
-
-
-def _estimate_train_tokens(manifest: Manifest, split_plan: SplitPlan) -> int:
-    file_index_by_relative_path = _manifest_index(manifest)
-    estimated_bytes = 0.0
-    for row_group in split_plan.train_row_groups:
-        file_index = file_index_by_relative_path[row_group.relative_path]
-        shard = manifest.shards[file_index]
-        row_group_rows = shard.row_group_rows[row_group.row_group_index]
-        estimated_bytes += shard.size_bytes * (row_group_rows / max(1, shard.num_rows))
-    return max(1, int(estimated_bytes // 4))
-
-
 def _materialize_val_blocks(
     manifest: Manifest,
     split_plan: SplitPlan,
@@ -138,7 +123,6 @@ class FineWebTrainReader:
         num_token_workers: int,
         doc_batch_size: int = DEFAULT_DOC_BATCH_SIZE,
         prefetch_batches: int = DEFAULT_PREFETCH_BATCHES,
-        estimated_tokens: int | None = None,
     ):
         self.manifest = manifest
         self.split_plan = split_plan
@@ -153,12 +137,6 @@ class FineWebTrainReader:
         self.prefetch_batches = prefetch_batches
         self.block_tokens = sequence_length + 1
         self.step = 0
-        self.num_tokens = (
-            estimated_tokens
-            if estimated_tokens is not None
-            else _estimate_train_tokens(manifest, split_plan)
-        )
-        self._num_batches = max(1, self.num_tokens // max(1, batch_size * sequence_length))
         self._stream = self._make_stream()
         self._initial_stream_state = self._stream.state_dict()
 
@@ -213,9 +191,6 @@ class FineWebTrainReader:
         raise RuntimeError(
             "FineWeb train reader cannot seek by step. Use checkpoint resume state instead."
         )
-
-    def num_batches(self):
-        return self._num_batches
 
     def sample_batch(self):
         blocks = [self._next_block() for _ in range(self.batch_size)]
@@ -275,7 +250,6 @@ def build_fineweb_readers(
         getattr(tokenizer, "name_or_path", None) or getattr(args, "tokenizer", "tokenizer")
     )
     num_token_workers = max(0, args.workers)
-    estimated_tokens = _estimate_train_tokens(manifest, split_plan)
 
     train_reader = FineWebTrainReader(
         manifest,
@@ -289,7 +263,6 @@ def build_fineweb_readers(
         num_token_workers=num_token_workers,
         doc_batch_size=DEFAULT_DOC_BATCH_SIZE,
         prefetch_batches=DEFAULT_PREFETCH_BATCHES,
-        estimated_tokens=estimated_tokens,
     )
 
     val_blocks = _materialize_val_blocks(

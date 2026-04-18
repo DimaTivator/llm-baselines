@@ -285,8 +285,6 @@ def train(
                 save_worker_state(ckpt_dir, train_reader=train_reader)
 
         ws = distributed_backend.get_world_size()
-        tokens = ws * substep * cfg.sequence_length * cfg.batch_size
-        epoch = tokens / train_reader.num_tokens
         if (
             curr_iter % cfg.eval_interval == 0
             or curr_iter == cfg.iterations
@@ -294,7 +292,6 @@ def train(
         ):
             eval_result = eval_and_log(
                 curr_iter,
-                epoch,
                 model,
                 val_reader,
                 type_ctx,
@@ -335,7 +332,6 @@ def train(
         if downstream_evaluator is not None and downstream_evaluator.should_run(curr_iter):
             downstream_logs = downstream_evaluator.evaluate(
                 curr_iter,
-                epoch,
                 model,
                 type_ctx,
                 distributed_backend,
@@ -346,7 +342,6 @@ def train(
         if lm_evaluator is not None and lm_evaluator.should_run(curr_iter):
             lm_logs = lm_evaluator.evaluate(
                 curr_iter,
-                epoch,
                 model,
                 type_ctx,
                 distributed_backend,
@@ -551,6 +546,7 @@ def train(
         ):
             train_loss = loss.detach().cpu().item() * cfg.acc_steps
             stats["train_loss"].append(train_loss)
+            consumed_tokens = curr_iter * ws * cfg.acc_steps * cfg.batch_size * cfg.sequence_length
 
             current_lrs = [param_group["lr"] for param_group in opt.param_groups]
 
@@ -560,14 +556,14 @@ def train(
             steady_mem_gb = torch.cuda.memory_allocated() / 1e9 if "cuda" in cfg.device else 0.0
 
             print(
-                f"Train: Iter={curr_iter} ({epoch:0.3f} epochs) "
+                f"Train: Iter={curr_iter} "
                 f"train_loss={train_loss:.3f} iter_dt={dt:.2e}s "
                 f"lr={current_lrs[0]:.2e} "
-                f"peak_mem={peak_mem_gb:.2f}GB"
+                f"peak_mem={peak_mem_gb:.2f}GB "
+                f"consumed_tokens={consumed_tokens}"
             )
 
             if cfg.wandb:
-                consumed_tokens = curr_iter * ws * cfg.acc_steps * cfg.batch_size * cfg.sequence_length
                 wandb.log(
                     {
                         "iter": curr_iter,
@@ -594,7 +590,6 @@ def train(
 
 def eval_and_log(
     curr_iter,
-    epoch,
     model,
     val_reader,
     type_ctx,
@@ -629,7 +624,8 @@ def eval_and_log(
     )
 
     print(
-        f">Eval: Iter={curr_iter} ({epoch:0.3f} epochs) "
+        f">Eval: Iter={curr_iter} "
+        f"consumed_tokens={curr_iter * distributed_backend.get_world_size() * cfg.acc_steps * cfg.batch_size * cfg.sequence_length} "
         f"val_loss={val_loss:.3f} "
         f"val_pp={val_perplexity:.3f} "
         f"val_acc={val_acc:3f}"

@@ -125,7 +125,7 @@ class DownstreamEvaluator:
         )
 
     @torch.no_grad()
-    def evaluate(self, curr_iter, epoch, model, type_ctx, distributed_backend):
+    def evaluate(self, curr_iter, model, type_ctx, distributed_backend):
         if not distributed_backend.is_master_process():
             return None
 
@@ -178,7 +178,8 @@ class DownstreamEvaluator:
                 print_lines.append(f"{log_key}={scalar:.4f}")
 
         print(
-            f">Downstream Eval: Iter={curr_iter} ({epoch:0.3f} epochs) "
+            f">Downstream Eval: Iter={curr_iter} "
+            f"consumed_tokens={logs['consumed_tokens']} "
             + " ".join(print_lines)
         )
 

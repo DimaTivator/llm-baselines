@@ -162,7 +162,7 @@ class AuxiliaryLMEvaluator:
         )
 
     @torch.no_grad()
-    def evaluate(self, curr_iter, epoch, model, type_ctx, distributed_backend):
+    def evaluate(self, curr_iter, model, type_ctx, distributed_backend):
         if not distributed_backend.is_master_process():
             return None
 
@@ -216,7 +216,8 @@ class AuxiliaryLMEvaluator:
             )
 
         print(
-            f">Aux LM Eval: Iter={curr_iter} ({epoch:0.3f} epochs) "
+            f">Aux LM Eval: Iter={curr_iter} "
+            f"consumed_tokens={logs['consumed_tokens']} "
             + " ".join(print_lines)
         )
 
