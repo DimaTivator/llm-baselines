@@ -101,6 +101,9 @@ def train(
     else:
         type_ctx = nullcontext()
 
+    train_reader, val_reader = datareaders["train"], datareaders["val"]
+    loaded_train_reader_state = False
+
     if cfg.resume_from:
         # By default this is a full resume including the model weights,
         # optimizer, scheduler, dataloader state, random seed, etc.
@@ -116,7 +119,10 @@ def train(
             cfg.device,
             load_scheduler=not cfg.decay_from_checkpoint,
         )
-        load_worker_state(ckpt_dir)
+        loaded_train_reader_state = load_worker_state(
+            ckpt_dir,
+            train_reader=train_reader,
+        )
         if cfg.decay_from_checkpoint:
             remaining_steps = cfg.iterations - curr_iter
             if remaining_steps <= 0:
@@ -171,8 +177,8 @@ def train(
     flops_per_token = raw_model.num_fwd_flops + raw_model.num_bck_flops
 
     substep = curr_iter * cfg.acc_steps
-    train_reader, val_reader = datareaders["train"], datareaders["val"]
-    train_reader.set_step(substep)
+    if not loaded_train_reader_state:
+        train_reader.set_step(substep)
     stats = {
         "train_loss": [],
         "val_loss": [],
@@ -238,14 +244,14 @@ def train(
                 ckpt_dir = exp_dir / "ckpts" / str(curr_iter)
                 if distributed_backend.is_master_process():
                     save_checkpoint(model, opt, scheduler, curr_iter, ckpt_dir)
-                save_worker_state(ckpt_dir)
+                save_worker_state(ckpt_dir, train_reader=train_reader)
 
         # Save explicit intermediate checkpoints
         if curr_iter > 0 and curr_iter in inter_ckpt_steps and exp_dir is not None:
             ckpt_dir = exp_dir / "ckpts" / str(curr_iter)
             if distributed_backend.is_master_process():
                 save_checkpoint(model, opt, scheduler, curr_iter, ckpt_dir)
-            save_worker_state(ckpt_dir)
+            save_worker_state(ckpt_dir, train_reader=train_reader)
 
             if cfg.upload_inter_ckpts_to_wandb:
                 distributed_backend.barrier()
@@ -276,7 +282,7 @@ def train(
                 ckpt_dir = exp_dir / "ckpts" / "latest"
                 if distributed_backend.is_master_process():
                     save_checkpoint(model, opt, scheduler, curr_iter, ckpt_dir)
-                save_worker_state(ckpt_dir)
+                save_worker_state(ckpt_dir, train_reader=train_reader)
 
         ws = distributed_backend.get_world_size()
         tokens = ws * substep * cfg.sequence_length * cfg.batch_size

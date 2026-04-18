@@ -362,7 +362,7 @@ def load_checkpoint(
     return itr
 
 
-def save_worker_state(ckpt_dir: Path):
+def save_worker_state(ckpt_dir: Path, train_reader=None):
     # Dataloader, rng states
     worker_state = {
         "rng_torch_cpu": torch.random.get_rng_state(),
@@ -370,15 +370,35 @@ def save_worker_state(ckpt_dir: Path):
         "rng_np": np.random.get_state(),
         "rng_python": random.getstate(),
     }
+    if train_reader is not None and hasattr(train_reader, "state_dict"):
+        worker_state["train_reader_state"] = train_reader.state_dict()
     rank = 0 if not dist.is_initialized() else dist.get_rank()
     ckpt_dir.mkdir(exist_ok=True, parents=True)
     torch.save(worker_state, ckpt_dir / f"worker_{rank}.pt")
 
 
-def load_worker_state(ckpt_dir: Path):
+def load_worker_state(ckpt_dir: Path, train_reader=None):
     rank = 0 if not dist.is_initialized() else dist.get_rank()
     worker_state = torch.load(ckpt_dir / f"worker_{rank}.pt", weights_only=False)
     torch.random.set_rng_state(worker_state["rng_torch_cpu"])
     torch.cuda.set_rng_state(worker_state["rng_torch_gpu"])
     np.random.set_state(worker_state["rng_np"])
     random.setstate(worker_state["rng_python"])
+
+    if train_reader is not None and getattr(train_reader, "requires_checkpoint_state", False):
+        if "train_reader_state" not in worker_state:
+            raise RuntimeError(
+                "Checkpoint is missing FineWeb train reader state. "
+                "Old FineWeb streaming checkpoints are unsupported."
+            )
+
+    if train_reader is not None and "train_reader_state" in worker_state:
+        if not hasattr(train_reader, "load_state_dict"):
+            raise RuntimeError(
+                "Checkpoint contains train reader state but the active reader "
+                "does not support load_state_dict()."
+            )
+        train_reader.load_state_dict(worker_state["train_reader_state"])
+        return True
+
+    return False

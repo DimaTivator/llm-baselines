@@ -18,6 +18,7 @@ for _p in [_SRC, _ROOT]:
 
 import config
 from data.utils import DataReader, get_dataset, get_tokenizer
+from data.fineweb import build_fineweb_readers
 import distributed
 from evals import build_evaluators
 from models.utils import get_model
@@ -480,6 +481,16 @@ def get_data_readers(args, verbose=True, tokenizer=None):
     # Set workers if not provided
     if not hasattr(args, 'workers'):
         args.workers = 8
+
+    if args.dataset in ("fineweb", "fineweb-edu"):
+        tokenizer = tokenizer or get_tokenizer(args)
+        tokenizer_factory = lambda: get_tokenizer(args, verbose=False)
+        return build_fineweb_readers(
+            args,
+            tokenizer=tokenizer,
+            tokenizer_factory=tokenizer_factory,
+            verbose=verbose,
+        )
 
     data_srcs = get_dataset(args)
 

@@ -1,181 +1,330 @@
-from tqdm import tqdm
-import numpy as np
-import datasets
-import datasets.distributed
-from transformers import AutoTokenizer
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Callable
+
+import torch
 import torch.distributed as dist
-import os
-import glob
+
+from .fineweb_streaming_core import (
+    FineWebEduStream,
+    Manifest,
+    SplitPlan,
+    build_manifest,
+    build_snapshot_split_plan,
+)
 
 
-hf_tknzr = AutoTokenizer.from_pretrained("gpt2")
+DEFAULT_FINEWEB_SPLIT_SEED = 2357
+DEFAULT_DOC_BATCH_SIZE = 64
+DEFAULT_PREFETCH_BATCHES = 4
 
 
-def _find_data_files(data_dir):
-    """Find all parquet/JSON files recursively under data_dir."""
-    files = glob.glob(os.path.join(data_dir, "**/*.parquet"), recursive=True)
-    files += glob.glob(os.path.join(data_dir, "**/*.json.gz"), recursive=True)
-    files += glob.glob(os.path.join(data_dir, "**/*.json"), recursive=True)
-    files += glob.glob(os.path.join(data_dir, "**/*.jsonl"), recursive=True)
-    files = sorted(set(files))
-    if not files:
-        raise ValueError(f"No data files found in {data_dir}")
-    print(f"Found {len(files)} data files in {data_dir}")
-    return files
+def _resolve_dataset_root(datasets_dir: str) -> Path:
+    dataset_root = Path(datasets_dir).expanduser()
+    if not dataset_root.is_dir():
+        raise FileNotFoundError(
+            "FineWeb requires --datasets-dir to point directly at a local parquet shard directory."
+        )
+    parquet_paths = sorted(path for path in dataset_root.glob("*.parquet") if path.is_file())
+    if not parquet_paths:
+        raise FileNotFoundError(
+            f"No direct-child parquet shards found under {dataset_root}."
+        )
+    return dataset_root
 
 
-def _detect_format(files):
-    if any(f.endswith(".parquet") for f in files):
-        return "parquet"
-    return "json"
+def _manifest_index(manifest: Manifest) -> dict[str, int]:
+    return {shard.relative_path: index for index, shard in enumerate(manifest.shards)}
 
 
-FINEWEB_VARIANT = "sample-100BT"
+def _estimate_train_tokens(manifest: Manifest, split_plan: SplitPlan) -> int:
+    file_index_by_relative_path = _manifest_index(manifest)
+    estimated_bytes = 0.0
+    for row_group in split_plan.train_row_groups:
+        file_index = file_index_by_relative_path[row_group.relative_path]
+        shard = manifest.shards[file_index]
+        row_group_rows = shard.row_group_rows[row_group.row_group_index]
+        estimated_bytes += shard.size_bytes * (row_group_rows / max(1, shard.num_rows))
+    return max(1, int(estimated_bytes // 4))
 
 
-def get_fineweb_data(datasets_dir, args, num_proc=40):
-    if getattr(args, 'streaming', False):
-        return get_fineweb_data_streaming(datasets_dir, args)
-    else:
-        return get_fineweb_data_common(datasets_dir, args, num_proc)
+def _materialize_val_blocks(
+    manifest: Manifest,
+    split_plan: SplitPlan,
+    tokenizer_factory: Callable[[], Any],
+    *,
+    block_tokens: int,
+    val_sequences: int,
+    num_token_workers: int,
+    doc_batch_size: int,
+    prefetch_batches: int,
+) -> torch.Tensor:
+    blocks: list[list[int]] = []
+    with FineWebEduStream(
+        manifest,
+        tokenizer_factory,
+        block_tokens=block_tokens,
+        split_plan=split_plan,
+        split="val",
+        rank=0,
+        world_size=1,
+        worker_id=0,
+        num_data_workers=1,
+        num_token_workers=num_token_workers,
+        doc_batch_size=doc_batch_size,
+        prefetch_batches=prefetch_batches,
+    ) as stream:
+        for _ in range(val_sequences):
+            try:
+                blocks.append(next(stream))
+            except StopIteration as exc:
+                raise RuntimeError(
+                    "Validation split exhausted before filling the frozen snapshot."
+                ) from exc
+
+    return torch.tensor(blocks, dtype=torch.long)
 
 
-def get_fineweb_data_streaming(datasets_dir, args):
-    eval_batch_size = getattr(args, 'eval_batch_size', args.batch_size)
-    eval_batches = getattr(args, 'eval_batches', 32)
-    val_examples_needed = int(eval_batch_size * eval_batches)
+class FineWebValReader:
+    def __init__(self, blocks: torch.Tensor, batch_size: int, sequence_length: int):
+        if blocks.ndim != 2:
+            raise ValueError("Validation blocks must be a 2-D tensor.")
+        if blocks.shape[0] % batch_size != 0:
+            raise ValueError("Validation blocks must divide exactly into full batches.")
+        if blocks.shape[1] != sequence_length + 1:
+            raise ValueError("Validation block width must equal sequence_length + 1.")
 
-    if os.path.isdir(datasets_dir):
-        data_files_list = _find_data_files(datasets_dir)
-        fmt = _detect_format(data_files_list)
-        data_files = {"train": data_files_list}
+        self.blocks = blocks.contiguous()
+        self.batch_size = batch_size
+        self.sequence_length = sequence_length
+        self.step = 0
+        self._num_batches = self.blocks.shape[0] // batch_size
+        self.num_tokens = self.blocks.shape[0] * sequence_length
 
-        # Shuffle before split so val gets random examples, not just the
-        # first N in file order. take/skip are lazy and don't share state.
-        shuffled = datasets.load_dataset(
-            fmt, data_files=data_files, split='train', streaming=True
-        ).shuffle(seed=2357, buffer_size=10_000)
+    def set_step(self, step: int):
+        if step < 0 or step > self._num_batches:
+            raise ValueError("Validation step is out of range.")
+        self.step = step
 
-        val_dataset = shuffled.take(val_examples_needed)
-        train_dataset = shuffled.skip(val_examples_needed)
+    def num_batches(self):
+        return self._num_batches
 
-        # Heuristic: ~4 bytes per token for English text in raw JSON/parquet
-        estimated_tokens = sum(os.path.getsize(f) for f in data_files_list) // 4
-    else:
-        print(f"{datasets_dir} not found locally, streaming FineWeb-Edu ({FINEWEB_VARIANT}) from HuggingFace...")
-        shuffled = datasets.load_dataset(
-            "HuggingFaceFW/fineweb-edu", FINEWEB_VARIANT, split="train", streaming=True
-        ).shuffle(seed=2357, buffer_size=10_000)
+    def sample_batch(self):
+        if self.step >= self._num_batches:
+            raise RuntimeError("FineWeb validation reader exhausted")
 
-        val_dataset = shuffled.take(val_examples_needed)
-        train_dataset = shuffled.skip(val_examples_needed)
+        start = self.step * self.batch_size
+        end = start + self.batch_size
+        chunk = self.blocks[start:end]
+        self.step += 1
+        return chunk[:, :-1], chunk[:, 1:]
 
-        estimated_tokens = 100_000_000_000  # FineWeb-Edu sample-100BT ~100B tokens
 
-    train_dataset = train_dataset.shuffle(seed=getattr(args, 'data_seed', 1337))
+class FineWebTrainReader:
+    requires_checkpoint_state = True
 
-    world_size, rank = 1, 0
-    if dist.is_initialized():
-        world_size = dist.get_world_size()
-        rank = dist.get_rank()
-        train_dataset = datasets.distributed.split_dataset_by_node(
-            train_dataset, rank=rank, world_size=world_size
+    def __init__(
+        self,
+        manifest: Manifest,
+        split_plan: SplitPlan,
+        tokenizer_factory: Callable[[], Any],
+        *,
+        tokenizer_name: str,
+        batch_size: int,
+        sequence_length: int,
+        rank: int,
+        world_size: int,
+        num_token_workers: int,
+        doc_batch_size: int = DEFAULT_DOC_BATCH_SIZE,
+        prefetch_batches: int = DEFAULT_PREFETCH_BATCHES,
+        estimated_tokens: int | None = None,
+    ):
+        self.manifest = manifest
+        self.split_plan = split_plan
+        self.tokenizer_factory = tokenizer_factory
+        self.tokenizer_name = tokenizer_name
+        self.batch_size = batch_size
+        self.sequence_length = sequence_length
+        self.rank = rank
+        self.world_size = world_size
+        self.num_token_workers = num_token_workers
+        self.doc_batch_size = doc_batch_size
+        self.prefetch_batches = prefetch_batches
+        self.block_tokens = sequence_length + 1
+        self.step = 0
+        self.num_tokens = (
+            estimated_tokens
+            if estimated_tokens is not None
+            else _estimate_train_tokens(manifest, split_plan)
+        )
+        self._num_batches = max(1, self.num_tokens // max(1, batch_size * sequence_length))
+        self._stream = self._make_stream()
+        self._initial_stream_state = self._stream.state_dict()
+
+    def _make_stream(self) -> FineWebEduStream:
+        return FineWebEduStream(
+            self.manifest,
+            self.tokenizer_factory,
+            block_tokens=self.block_tokens,
+            split_plan=self.split_plan,
+            split="train",
+            rank=self.rank,
+            world_size=self.world_size,
+            worker_id=0,
+            num_data_workers=1,
+            num_token_workers=self.num_token_workers,
+            doc_batch_size=self.doc_batch_size,
+            prefetch_batches=self.prefetch_batches,
         )
 
-    return {
-        "train_dataset": train_dataset,
-        "val_dataset": val_dataset,
-        "world_size": world_size,
-        "rank": rank,
-        "estimated_tokens": estimated_tokens,
-    }
+    def _replace_stream(self, stream_state: dict[str, Any] | None = None):
+        self._stream.close()
+        self._stream = self._make_stream()
+        if stream_state is not None:
+            self._stream.load_state_dict(stream_state)
 
-
-def get_fineweb_data_common(datasets_dir, args, num_proc=40):
-    train_bin_path = os.path.join(datasets_dir, "train.bin")
-    val_bin_path = os.path.join(datasets_dir, "val.bin")
-
-    if not os.path.exists(train_bin_path):
-        os.makedirs(datasets_dir, exist_ok=True)
-
-        try:
-            data_files_list = _find_data_files(datasets_dir)
-            fmt = _detect_format(data_files_list)
-        except ValueError:
-            print(f"No local files found. Downloading FineWeb-Edu ({FINEWEB_VARIANT}) from HuggingFace...")
-            dataset = datasets.load_dataset("HuggingFaceFW/fineweb-edu", FINEWEB_VARIANT)
-            split_dataset = dataset["train"].train_test_split(
-                test_size=0.0005, seed=2357, shuffle=True
-            )
-            split_dataset["val"] = split_dataset.pop("test")
-
-            def process(example):
-                ids = hf_tknzr.encode(
-                    text=example["text"], add_special_tokens=True,
-                    padding=False, truncation=False,
-                )
-                return {"ids": ids, "len": len(ids)}
-
-            tokenized = split_dataset.map(
-                process, remove_columns=["text"],
-                desc="tokenizing the splits", num_proc=num_proc,
-            )
-
-            for split, dset in tokenized.items():
-                arr_len = np.sum(dset["len"])
-                filename = os.path.join(datasets_dir, f"{split}.bin")
-                dtype = np.uint16
-                arr = np.memmap(filename, dtype=dtype, mode="w+", shape=(arr_len,))
-                total_batches = min(1024, len(dset))
-
-                idx = 0
-                for batch_idx in tqdm(range(total_batches), desc=f"writing {filename}"):
-                    batch = dset.shard(
-                        num_shards=total_batches, index=batch_idx, contiguous=True
-                    ).with_format("numpy")
-                    arr_batch = np.concatenate(batch["ids"])
-                    arr[idx : idx + len(arr_batch)] = arr_batch
-                    idx += len(arr_batch)
-                arr.flush()
-
-            return {"train": train_bin_path, "val": val_bin_path}
-
-        dataset = datasets.load_dataset(fmt, data_files={"train": data_files_list})
-        split_dataset = dataset["train"].train_test_split(
-            test_size=0.0005, seed=2357, shuffle=True
+    def _wrap_stream(self):
+        end_state = self._stream.state_dict()
+        tail_tokens = list(end_state["token_buffer"])
+        self._replace_stream()
+        wrapped_state = self._stream.state_dict()
+        wrapped_state["token_buffer"] = tail_tokens
+        wrapped_state["dropped_tail_tokens"] = 0
+        wrapped_state["committed_cursor"] = dict(
+            self._initial_stream_state["committed_cursor"]
         )
-        split_dataset["val"] = split_dataset.pop("test")
+        self._stream.load_state_dict(wrapped_state)
 
-        def process(example):
-            ids = hf_tknzr.encode(
-                text=example["text"], add_special_tokens=True,
-                padding=False, truncation=False,
-            )
-            return {"ids": ids, "len": len(ids)}
+    def _next_block(self) -> list[int]:
+        while True:
+            try:
+                return next(self._stream)
+            except StopIteration:
+                self._wrap_stream()
 
-        tokenized = split_dataset.map(
-            process, remove_columns=["text"],
-            desc="tokenizing the splits", num_proc=num_proc,
+    def set_step(self, step: int):
+        if step == self.step:
+            return
+        if step == 0:
+            self.step = 0
+            self._replace_stream(self._initial_stream_state)
+            return
+        raise RuntimeError(
+            "FineWeb train reader cannot seek by step. Use checkpoint resume state instead."
         )
 
-        for split, dset in tokenized.items():
-            arr_len = np.sum(dset["len"])
-            filename = os.path.join(datasets_dir, f"{split}.bin")
-            dtype = np.uint16
-            arr = np.memmap(filename, dtype=dtype, mode="w+", shape=(arr_len,))
-            total_batches = min(1024, len(dset))
+    def num_batches(self):
+        return self._num_batches
 
-            idx = 0
-            for batch_idx in tqdm(range(total_batches), desc=f"writing {filename}"):
-                batch = dset.shard(
-                    num_shards=total_batches, index=batch_idx, contiguous=True
-                ).with_format("numpy")
-                arr_batch = np.concatenate(batch["ids"])
-                arr[idx : idx + len(arr_batch)] = arr_batch
-                idx += len(arr_batch)
-            arr.flush()
+    def sample_batch(self):
+        blocks = [self._next_block() for _ in range(self.batch_size)]
+        batch = torch.tensor(blocks, dtype=torch.long)
+        self.step += 1
+        return batch[:, :-1], batch[:, 1:]
 
-    return {
-        "train": train_bin_path,
-        "val": val_bin_path,
-    }
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "reader_type": "fineweb_train_reader_v1",
+            "tokenizer_name": self.tokenizer_name,
+            "batch_size": self.batch_size,
+            "sequence_length": self.sequence_length,
+            "step": self.step,
+            "stream_state": self._stream.state_dict(),
+        }
+
+    def load_state_dict(self, state: dict[str, Any]):
+        if state.get("reader_type") != "fineweb_train_reader_v1":
+            raise RuntimeError("Unsupported FineWeb train reader checkpoint format.")
+        if str(state["tokenizer_name"]) != self.tokenizer_name:
+            raise ValueError("Checkpoint tokenizer does not match this FineWeb reader.")
+        if int(state["batch_size"]) != self.batch_size:
+            raise ValueError("Checkpoint batch_size does not match this FineWeb reader.")
+        if int(state["sequence_length"]) != self.sequence_length:
+            raise ValueError(
+                "Checkpoint sequence_length does not match this FineWeb reader."
+            )
+
+        self.step = int(state["step"])
+        self._replace_stream(state["stream_state"])
+
+
+def build_fineweb_readers(
+    args,
+    *,
+    tokenizer: Any,
+    tokenizer_factory: Callable[[], Any],
+    verbose: bool = True,
+):
+    dataset_root = _resolve_dataset_root(args.datasets_dir)
+    manifest = build_manifest(dataset_root)
+    block_tokens = args.sequence_length + 1
+    val_sequences = args.eval_batches * args.eval_batch_size
+    split_plan = build_snapshot_split_plan(
+        manifest,
+        tokenizer_factory,
+        block_tokens=block_tokens,
+        val_sequences=val_sequences,
+        split_seed=DEFAULT_FINEWEB_SPLIT_SEED,
+        shuffle_seed=args.data_seed,
+    )
+
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    tokenizer_name = str(
+        getattr(tokenizer, "name_or_path", None) or getattr(args, "tokenizer", "tokenizer")
+    )
+    num_token_workers = max(0, args.workers)
+    estimated_tokens = _estimate_train_tokens(manifest, split_plan)
+
+    train_reader = FineWebTrainReader(
+        manifest,
+        split_plan,
+        tokenizer_factory,
+        tokenizer_name=tokenizer_name,
+        batch_size=args.batch_size,
+        sequence_length=args.sequence_length,
+        rank=rank,
+        world_size=world_size,
+        num_token_workers=num_token_workers,
+        doc_batch_size=DEFAULT_DOC_BATCH_SIZE,
+        prefetch_batches=DEFAULT_PREFETCH_BATCHES,
+        estimated_tokens=estimated_tokens,
+    )
+
+    val_blocks = _materialize_val_blocks(
+        manifest,
+        split_plan,
+        tokenizer_factory,
+        block_tokens=block_tokens,
+        val_sequences=val_sequences,
+        num_token_workers=num_token_workers,
+        doc_batch_size=DEFAULT_DOC_BATCH_SIZE,
+        prefetch_batches=DEFAULT_PREFETCH_BATCHES,
+    )
+    val_reader = FineWebValReader(
+        val_blocks,
+        batch_size=args.eval_batch_size,
+        sequence_length=args.sequence_length,
+    )
+
+    if verbose:
+        print(f"Using FineWeb parquet dataset at {dataset_root}")
+        print(
+            f"FineWeb manifest: {len(manifest.shards)} shards, "
+            f"{manifest.total_row_groups} row groups"
+        )
+        print(
+            f"FineWeb split: {len(split_plan.train_row_groups)} train row groups, "
+            f"{len(split_plan.val_row_groups)} val row groups"
+        )
+        print(
+            f"FineWeb reader: world_size={world_size}, rank={rank}, "
+            f"tokenizer_threads={num_token_workers}"
+        )
+        print(
+            f"FineWeb val snapshot: {val_reader.num_batches()} batches x "
+            f"{args.eval_batch_size} examples"
+        )
+
+    return {"train": train_reader, "val": val_reader}
