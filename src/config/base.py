@@ -1,6 +1,8 @@
 import distributed
 import json
 
+INTER_CKPT_UPLOAD_DESTINATIONS = ("wandb", "huggingface")
+
 
 def parse_args(base_parser, args, namespace):
     parser = base_parser
@@ -46,16 +48,31 @@ def parse_args(base_parser, args, namespace):
     )
     parser.add_argument("--latest-ckpt-interval", default=0, type=int)
     parser.add_argument(
-        "--upload-inter-ckpts-to-wandb",
-        action="store_true",
-        help="Upload checkpoints from --inter-ckpts to W&B artifacts.",
+        "--upload-inter-ckpts-to",
+        nargs="+",
+        default=None,
+        choices=INTER_CKPT_UPLOAD_DESTINATIONS,
+        help=(
+            "Upload checkpoints from --inter-ckpts to one or more destinations. "
+            "Example: --upload-inter-ckpts-to wandb huggingface."
+        ),
+    )
+    parser.add_argument(
+        "--hf-inter-ckpt-repo-id",
+        default=None,
+        type=str,
+        help=(
+            "Hugging Face Hub repo id for intermediate checkpoint uploads "
+            "(e.g. 'org/run-checkpoints'). Required when --upload-inter-ckpts-to "
+            "includes huggingface unless HF_INTER_CKPT_REPO_ID is set."
+        ),
     )
     parser.add_argument(
         "--delete-local-inter-ckpts-after-upload",
         action="store_true",
         help=(
-            "Delete a local checkpoint from --inter-ckpts after a successful W&B "
-            "artifact upload. Requires --upload-inter-ckpts-to-wandb."
+            "Delete a local checkpoint from --inter-ckpts after at least one requested "
+            "upload succeeds. Requires --upload-inter-ckpts-to."
         ),
     )
     parser.add_argument("--resume-from", default=None, type=str)

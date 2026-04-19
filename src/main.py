@@ -36,19 +36,34 @@ from dtype_utils.dtypes import (
 
 
 def validate_checkpoint_args(args):
-    if args.delete_local_inter_ckpts_after_upload and not args.upload_inter_ckpts_to_wandb:
+    upload_destinations = [] if args.upload_inter_ckpts_to is None else list(
+        dict.fromkeys(args.upload_inter_ckpts_to)
+    )
+    args.upload_inter_ckpts_to = upload_destinations
+
+    if args.delete_local_inter_ckpts_after_upload and not upload_destinations:
         raise ValueError(
             "--delete-local-inter-ckpts-after-upload requires "
-            "--upload-inter-ckpts-to-wandb."
+            "--upload-inter-ckpts-to."
         )
 
-    if args.upload_inter_ckpts_to_wandb and not args.wandb:
-        raise ValueError("--upload-inter-ckpts-to-wandb requires --wandb.")
+    if "wandb" in upload_destinations and not args.wandb:
+        raise ValueError("--upload-inter-ckpts-to wandb requires --wandb.")
+
+    if "huggingface" in upload_destinations:
+        args.hf_inter_ckpt_repo_id = (
+            args.hf_inter_ckpt_repo_id or os.environ.get("HF_INTER_CKPT_REPO_ID")
+        )
+        if not args.hf_inter_ckpt_repo_id:
+            raise ValueError(
+                "--upload-inter-ckpts-to huggingface requires "
+                "--hf-inter-ckpt-repo-id or HF_INTER_CKPT_REPO_ID."
+            )
 
     inter_ckpts = [] if args.inter_ckpts is None else args.inter_ckpts
     if not inter_ckpts:
-        if args.upload_inter_ckpts_to_wandb:
-            raise ValueError("--upload-inter-ckpts-to-wandb requires --inter-ckpts.")
+        if upload_destinations:
+            raise ValueError("--upload-inter-ckpts-to requires --inter-ckpts.")
         if args.delete_local_inter_ckpts_after_upload:
             raise ValueError(
                 "--delete-local-inter-ckpts-after-upload requires --inter-ckpts."
@@ -128,6 +143,7 @@ def main(args):
     # ── Experiment naming / WandB ─────────────────────────────────────────
     exp_name = get_exp_name(args)
     wandb_group = get_wandb_group(args)
+    args.wandb_group = wandb_group
     exp_dir = Path(args.results_base_folder) / wandb_group / exp_name if not args.no_local_save else None
     if distributed_backend.is_master_process() and args.wandb:
         wandb.init(

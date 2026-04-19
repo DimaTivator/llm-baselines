@@ -35,8 +35,12 @@ from .utils import (
 )
 
 
-def _sanitize_wandb_artifact_name(value):
+def _sanitize_remote_name(value):
     return "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in value)
+
+
+def _sanitize_wandb_artifact_name(value):
+    return _sanitize_remote_name(value)
 
 
 def _get_inter_ckpt_artifact_name(curr_iter):
@@ -46,6 +50,18 @@ def _get_inter_ckpt_artifact_name(curr_iter):
     run_group = wandb.run.group or "ungrouped"
     return _sanitize_wandb_artifact_name(
         f"{run_group}-{wandb.run.name}-inter-ckpt-{curr_iter}"
+    )
+
+
+def _get_inter_ckpt_hf_path(curr_iter: int, cfg):
+    run_group = getattr(cfg, "wandb_group", None) or "ungrouped"
+    return "/".join(
+        (
+            "intermediate-checkpoints",
+            _sanitize_remote_name(run_group),
+            _sanitize_remote_name(cfg.experiment_name),
+            f"inter-ckpt-{curr_iter}",
+        )
     )
 
 
@@ -69,6 +85,82 @@ def _upload_inter_ckpt_to_wandb(ckpt_dir: Path, curr_iter: int, cfg):
     wandb.run.log_artifact(artifact)
     artifact.wait()
     return artifact_name
+
+
+def _upload_inter_ckpt_to_huggingface(ckpt_dir: Path, curr_iter: int, cfg):
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "huggingface_hub is required for intermediate checkpoint upload to Hugging Face."
+        ) from exc
+
+    api = HfApi(endpoint="https://huggingface.co")
+    path_in_repo = _get_inter_ckpt_hf_path(curr_iter, cfg)
+    api.create_repo(repo_id=cfg.hf_inter_ckpt_repo_id, exist_ok=True, repo_type="model")
+    api.upload_folder(
+        repo_id=cfg.hf_inter_ckpt_repo_id,
+        repo_type="model",
+        folder_path=str(ckpt_dir),
+        path_in_repo=path_in_repo,
+        commit_message=(
+            f"Upload intermediate checkpoint for {cfg.experiment_name} at iteration {curr_iter}"
+        ),
+    )
+    return f"{cfg.hf_inter_ckpt_repo_id}/{path_in_repo}"
+
+
+def _upload_inter_ckpt_and_maybe_delete(ckpt_dir: Path, curr_iter: int, cfg):
+    uploaded_locations = {}
+    failed_uploads = {}
+
+    for destination in cfg.upload_inter_ckpts_to:
+        try:
+            if destination == "wandb":
+                uploaded_locations[destination] = _upload_inter_ckpt_to_wandb(
+                    ckpt_dir, curr_iter, cfg
+                )
+            elif destination == "huggingface":
+                uploaded_locations[destination] = _upload_inter_ckpt_to_huggingface(
+                    ckpt_dir, curr_iter, cfg
+                )
+            else:  # pragma: no cover
+                raise ValueError(
+                    f"Unsupported intermediate checkpoint upload destination: {destination}"
+                )
+        except Exception as exc:
+            failed_uploads[destination] = exc
+
+    for destination, location in uploaded_locations.items():
+        remote_name = "W&B artifact" if destination == "wandb" else "Hugging Face path"
+        print(
+            f"Uploaded intermediate checkpoint at iter {curr_iter} "
+            f"to {remote_name} '{location}'."
+        )
+
+    deleted_local_copy = False
+
+    if uploaded_locations and cfg.delete_local_inter_ckpts_after_upload:
+        shutil.rmtree(ckpt_dir)
+        deleted_local_copy = True
+        print(
+            "Deleted local intermediate checkpoint after at least one successful "
+            f"upload: {ckpt_dir}"
+        )
+
+    for destination, exc in failed_uploads.items():
+        remote_name = "W&B artifact" if destination == "wandb" else "Hugging Face"
+        local_state = (
+            "Local checkpoint was deleted because another upload destination succeeded."
+            if deleted_local_copy
+            else f"Keeping local checkpoint at {ckpt_dir}."
+        )
+        print(
+            f"WARNING: failed to upload intermediate checkpoint at iter {curr_iter} "
+            f"to {remote_name}. {local_state} Error: {exc}"
+        )
+
+    return uploaded_locations, failed_uploads
 
 
 def train(
@@ -253,27 +345,10 @@ def train(
                 save_checkpoint(model, opt, scheduler, curr_iter, ckpt_dir)
             save_worker_state(ckpt_dir, train_reader=train_reader)
 
-            if cfg.upload_inter_ckpts_to_wandb:
+            if cfg.upload_inter_ckpts_to:
                 distributed_backend.barrier()
                 if distributed_backend.is_master_process():
-                    artifact_name = _get_inter_ckpt_artifact_name(curr_iter)
-                    try:
-                        artifact_name = _upload_inter_ckpt_to_wandb(ckpt_dir, curr_iter, cfg)
-                        print(
-                            f"Uploaded intermediate checkpoint at iter {curr_iter} "
-                            f"to W&B artifact '{artifact_name}'."
-                        )
-                        if cfg.delete_local_inter_ckpts_after_upload:
-                            shutil.rmtree(ckpt_dir)
-                            print(
-                                f"Deleted local intermediate checkpoint after upload: {ckpt_dir}"
-                            )
-                    except Exception as exc:
-                        print(
-                            f"WARNING: failed to upload intermediate checkpoint at iter "
-                            f"{curr_iter} to W&B artifact '{artifact_name}'. Keeping local "
-                            f"checkpoint at {ckpt_dir}. Error: {exc}"
-                        )
+                    _upload_inter_ckpt_and_maybe_delete(ckpt_dir, curr_iter, cfg)
                 distributed_backend.barrier()
 
         # Save temporary checkpoint for resuming training
