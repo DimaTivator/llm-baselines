@@ -6,3 +6,4 @@ from .adopt import ADOPT
 from .soap.soap_harvard import SOAP
 from .MARS.MARS.optimizers.mars import MARS
 from .MARS.MARS_M.optimizers.mars_m import MARS_M
+from .swan import SWAN

@@ -14,7 +14,7 @@ from .memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH as SLIM_ADAM_DEFA
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
-from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M
+from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN
 
 
 def get_optimizer(param_groups, args, model=None, qargs=None):
@@ -527,6 +527,33 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             loro_type=args.loro_type,
             model=raw_model,
             use_exact_loro=args.use_exact_loro,
+        )
+    elif optimizer_name == "swan":
+        ns_func_mapping = {
+            'jordan': 'jordan',
+            'express_orig': 'polar_orig',
+            'express_modified': 'polar_mod',
+            '5777_left_1e_3': '5777',
+            '5779_left_15e_4': '5779',
+            'cesista': 'jordan',
+            'svd': 'jordan', 
+        }
+        use_nesterov = args.nesterov and (args.beta1 > 0)
+        ns_func = ns_func_mapping.get(args.newton_schulz_func, 'jordan')
+        optimizer = SWAN(
+            param_groups, 
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            momentum=args.beta1,
+            dampening=args.dampening,
+            nesterov=use_nesterov,
+            sign_update=args.sgd_sign_update,
+            k=args.muon_ns_steps,
+            beta=args.swan_ns_step_size,
+            ns_func=ns_func,
+            epsilon=args.eps,
+            rescale=not getattr(args, 'swan_no_rescale', False),
+            min_numel_whitening=args.swan_min_numel_whitening,
         )
     elif optimizer_name == "badam":
         raw_model = model.module if hasattr(model, "module") else model
