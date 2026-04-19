@@ -70,8 +70,6 @@ torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --log-interval 50 \
     --inter-ckpts "${INTER_CKPTS[@]}" \
     --latest-ckpt-interval 5000 \
-    --upload-inter-ckpts-to-wandb \
-    --delete-local-inter-ckpts-after-upload \
     \
     --results-base-folder "${RESULTS_DIR}" \
     --wandb \
