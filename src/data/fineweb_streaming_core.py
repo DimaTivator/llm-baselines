@@ -296,6 +296,24 @@ def build_manifest(dataset_root: str | Path) -> Manifest:
     return Manifest(dataset_root=str(root), shards=tuple(shards))
 
 
+_validated_dataset_fingerprints: dict[str, str] = {}
+_validation_lock = threading.Lock()
+
+
+def _validate_manifest_against_disk(manifest: Manifest) -> None:
+    root_key = str(Path(manifest.dataset_root).resolve())
+    with _validation_lock:
+        cached = _validated_dataset_fingerprints.get(root_key)
+        if cached == manifest.fingerprint:
+            return
+        current = build_manifest(manifest.dataset_path)
+        if current.fingerprint != manifest.fingerprint:
+            raise ValueError(
+                "Dataset files do not match the provided manifest fingerprint."
+            )
+        _validated_dataset_fingerprints[root_key] = manifest.fingerprint
+
+
 def _stable_hash_hex(*parts: object) -> str:
     digest = hashlib.sha256()
     for part in parts:
@@ -583,7 +601,7 @@ class FineWebEduStream(Iterator[list[int]]):
         self.doc_batch_size = doc_batch_size
         self.prefetch_batches = prefetch_batches
 
-        self._validate_manifest_against_disk()
+        _validate_manifest_against_disk(self.manifest)
         self._file_index_by_relative_path = {
             shard.relative_path: index for index, shard in enumerate(self.manifest.shards)
         }
@@ -721,13 +739,6 @@ class FineWebEduStream(Iterator[list[int]]):
         self._dropped_tail_tokens = dropped_tail_tokens
 
         self._clear_row_group_cache()
-
-    def _validate_manifest_against_disk(self) -> None:
-        current = build_manifest(self.manifest.dataset_path)
-        if current.fingerprint != self.manifest.fingerprint:
-            raise ValueError(
-                "Dataset files do not match the provided manifest fingerprint."
-            )
 
     def _ensure_open(self) -> None:
         if self._closed:

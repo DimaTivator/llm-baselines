@@ -85,7 +85,6 @@ class FineWebValReader:
         self.sequence_length = sequence_length
         self.step = 0
         self._num_batches = self.blocks.shape[0] // batch_size
-        self.num_tokens = self.blocks.shape[0] * sequence_length
 
     def set_step(self, step: int):
         if step < 0 or step > self._num_batches:
@@ -224,6 +223,40 @@ class FineWebTrainReader:
         self._replace_stream(state["stream_state"])
 
 
+def _broadcast_split_plan(
+    split_plan: SplitPlan | None,
+    *,
+    rank: int,
+    world_size: int,
+) -> SplitPlan:
+    if not (dist.is_initialized() and world_size > 1):
+        return split_plan
+    payload = [split_plan.to_dict()] if rank == 0 else [None]
+    dist.broadcast_object_list(payload, src=0)
+    return split_plan if rank == 0 else SplitPlan.from_dict(payload[0])
+
+
+def _broadcast_val_blocks(
+    val_blocks: torch.Tensor | None,
+    *,
+    rank: int,
+    world_size: int,
+    device: str,
+) -> torch.Tensor:
+    if not (dist.is_initialized() and world_size > 1):
+        return val_blocks
+    shape_payload = [list(val_blocks.shape)] if rank == 0 else [None]
+    dist.broadcast_object_list(shape_payload, src=0)
+    shape = shape_payload[0]
+    staging = (
+        val_blocks.to(device=device, dtype=torch.long)
+        if rank == 0
+        else torch.empty(shape, dtype=torch.long, device=device)
+    )
+    dist.broadcast(staging, src=0)
+    return staging.to("cpu")
+
+
 def build_fineweb_readers(
     args,
     *,
@@ -235,14 +268,6 @@ def build_fineweb_readers(
     manifest = build_manifest(dataset_root)
     block_tokens = args.sequence_length + 1
     val_sequences = args.eval_batches * args.eval_batch_size
-    split_plan = build_snapshot_split_plan(
-        manifest,
-        tokenizer_factory,
-        block_tokens=block_tokens,
-        val_sequences=val_sequences,
-        split_seed=DEFAULT_FINEWEB_SPLIT_SEED,
-        shuffle_seed=args.data_seed,
-    )
 
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     rank = dist.get_rank() if dist.is_initialized() else 0
@@ -250,6 +275,19 @@ def build_fineweb_readers(
         getattr(tokenizer, "name_or_path", None) or getattr(args, "tokenizer", "tokenizer")
     )
     num_token_workers = max(0, args.workers)
+
+    if rank == 0:
+        split_plan = build_snapshot_split_plan(
+            manifest,
+            tokenizer_factory,
+            block_tokens=block_tokens,
+            val_sequences=val_sequences,
+            split_seed=DEFAULT_FINEWEB_SPLIT_SEED,
+            shuffle_seed=args.data_seed,
+        )
+    else:
+        split_plan = None
+    split_plan = _broadcast_split_plan(split_plan, rank=rank, world_size=world_size)
 
     train_reader = FineWebTrainReader(
         manifest,
@@ -265,15 +303,24 @@ def build_fineweb_readers(
         prefetch_batches=DEFAULT_PREFETCH_BATCHES,
     )
 
-    val_blocks = _materialize_val_blocks(
-        manifest,
-        split_plan,
-        tokenizer_factory,
-        block_tokens=block_tokens,
-        val_sequences=val_sequences,
-        num_token_workers=num_token_workers,
-        doc_batch_size=DEFAULT_DOC_BATCH_SIZE,
-        prefetch_batches=DEFAULT_PREFETCH_BATCHES,
+    if rank == 0:
+        val_blocks = _materialize_val_blocks(
+            manifest,
+            split_plan,
+            tokenizer_factory,
+            block_tokens=block_tokens,
+            val_sequences=val_sequences,
+            num_token_workers=num_token_workers,
+            doc_batch_size=DEFAULT_DOC_BATCH_SIZE,
+            prefetch_batches=DEFAULT_PREFETCH_BATCHES,
+        )
+    else:
+        val_blocks = None
+    val_blocks = _broadcast_val_blocks(
+        val_blocks,
+        rank=rank,
+        world_size=world_size,
+        device=getattr(args, "device", "cpu"),
     )
     val_reader = FineWebValReader(
         val_blocks,
@@ -281,7 +328,7 @@ def build_fineweb_readers(
         sequence_length=args.sequence_length,
     )
 
-    if verbose:
+    if verbose and rank == 0:
         print(f"Using FineWeb parquet dataset at {dataset_root}")
         print(
             f"FineWeb manifest: {len(manifest.shards)} shards, "
