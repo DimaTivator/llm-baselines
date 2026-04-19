@@ -2,6 +2,8 @@
 tiktoken
 transformers>=4.45.2
 datasets
+torchdata
+pyarrow
 huggingface_hub
 zstandard
 
