@@ -6,7 +6,7 @@ DATASETS_DIR="${DATASETS_DIR:-${INPUT_PATH:-./datasets}}"
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-"./evals_cache"}
 RESULTS_DIR=${RESULTS_DIR:-"./exps"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain-finewweb-edu-TEST"}
-HF_INTER_CKPT_REPO_ID=${HF_INTER_CKPT_REPO_ID:-"fp8-pretrain-checkpoints"}
+HF_INTER_CKPT_REPO_ID=${HF_INTER_CKPT_REPO_ID:-"AverageMetaheuristicsEnjoyer/fp8-pretrain-checkpoints"}
 
 N_LAYER=12
 N_EMBD=1024
