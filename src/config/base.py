@@ -128,8 +128,7 @@ def parse_args(base_parser, args, namespace):
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
             "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
-<<<<<<< HEAD
-            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  # SOTA
+            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan",  # SOTA
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
@@ -141,9 +140,6 @@ def parse_args(base_parser, args, namespace):
             "slim_adam",  # SlimAdam: memory-efficient Adam with compressed second moments
             "riemannian_adamw",  # Riemannian Adam on Stiefel manifold (LoRA factors)
             "riemannian_sgd",   # Riemannian SGD on Stiefel manifold (LoRA factors)
-=======
-            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon", "swan",  # SOTA
->>>>>>> swan
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
