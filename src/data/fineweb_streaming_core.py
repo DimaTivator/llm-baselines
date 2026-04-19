@@ -231,6 +231,12 @@ class SplitPlan:
 
 
 @dataclass(frozen=True)
+class SplitPlanWithValBlocks:
+    plan: SplitPlan
+    val_blocks: tuple[tuple[int, ...], ...]
+
+
+@dataclass(frozen=True)
 class _SourceCursor:
     assigned_row_group_index: int
     row_in_group: int
@@ -409,7 +415,7 @@ def build_split_plan(
     )
 
 
-def build_snapshot_split_plan(
+def build_snapshot_split_plan_with_val_blocks(
     manifest: Manifest,
     tokenizer_factory: Callable[[], Any],
     *,
@@ -417,8 +423,8 @@ def build_snapshot_split_plan(
     val_sequences: int,
     split_seed: int = 0,
     shuffle_seed: int = 0,
-) -> SplitPlan:
-    """Reserve val row groups until they cover a fixed packed-sequence budget."""
+) -> SplitPlanWithValBlocks:
+    """Reserve val row groups and pack their tokens into the val blocks."""
 
     if block_tokens <= 0:
         raise ValueError("block_tokens must be a positive integer.")
@@ -426,15 +432,17 @@ def build_snapshot_split_plan(
         raise ValueError("val_sequences must be >= 0.")
 
     split_order = _ordered_row_groups_for_membership(manifest, split_seed=split_seed)
+    val_blocks: list[tuple[int, ...]] = []
     if val_sequences == 0:
         val_row_groups: tuple[RowGroupRef, ...] = tuple()
     else:
         tokenizer = tokenizer_factory()
+        eos_token_id = _resolve_eos_token_id(tokenizer)
         file_index_by_relative_path = {
             shard.relative_path: index for index, shard in enumerate(manifest.shards)
         }
         parquet_files: dict[int, pq.ParquetFile] = {}
-        total_tokens = 0
+        token_buffer: list[int] = []
         selected: list[RowGroupRef] = []
 
         try:
@@ -454,15 +462,23 @@ def build_snapshot_split_plan(
                 )
                 texts = table.column("text").to_pylist()
                 for text in texts:
-                    total_tokens += len(_tokenize_text(tokenizer, text)) + 1
-
-                if total_tokens // block_tokens >= val_sequences:
+                    token_buffer.extend(_tokenize_text(tokenizer, text))
+                    token_buffer.append(eos_token_id)
+                    while (
+                        len(token_buffer) >= block_tokens
+                        and len(val_blocks) < val_sequences
+                    ):
+                        val_blocks.append(tuple(token_buffer[:block_tokens]))
+                        del token_buffer[:block_tokens]
+                    if len(val_blocks) >= val_sequences:
+                        break
+                if len(val_blocks) >= val_sequences:
                     break
         finally:
             for parquet_file in parquet_files.values():
                 parquet_file.close()
 
-        if total_tokens // block_tokens < val_sequences:
+        if len(val_blocks) < val_sequences:
             raise ValueError(
                 "Validation reservation does not cover the requested packed sequence budget."
             )
@@ -479,7 +495,7 @@ def build_snapshot_split_plan(
         len(val_row_groups) / max(1, len(all_row_groups)) if all_row_groups else 0.0
     )
 
-    return SplitPlan(
+    plan = SplitPlan(
         manifest_fingerprint=manifest.fingerprint,
         val_fraction=val_fraction,
         split_seed=split_seed,
@@ -487,6 +503,7 @@ def build_snapshot_split_plan(
         train_row_groups=train_row_groups,
         val_row_groups=val_row_groups,
     )
+    return SplitPlanWithValBlocks(plan=plan, val_blocks=tuple(val_blocks))
 
 
 def _build_identity_split_plan(manifest: Manifest) -> SplitPlan:
@@ -630,7 +647,6 @@ class FineWebEduStream(Iterator[list[int]]):
         self._token_buffer: list[int] = []
         self._token_buffer_start = 0
         self._emitted_block_count = 0
-        self._dropped_tail_tokens = 0
 
         self._open_parquet_file = None
         self._open_file_index: int | None = None
@@ -651,10 +667,8 @@ class FineWebEduStream(Iterator[list[int]]):
                 self._consume_next_pending_batch()
                 continue
             if self._is_eof(self._source_cursor):
-                self._dropped_tail_tokens = self._available_tokens()
                 raise StopIteration
 
-        self._dropped_tail_tokens = 0
         return self._consume_block()
 
     def close(self) -> None:
@@ -684,10 +698,6 @@ class FineWebEduStream(Iterator[list[int]]):
     @property
     def emitted_block_count(self) -> int:
         return self._emitted_block_count
-
-    @property
-    def dropped_tail_tokens(self) -> int:
-        return self._dropped_tail_tokens
 
     def barrier_and_snapshot(self) -> dict[str, Any]:
         self._ensure_open()
@@ -729,14 +739,12 @@ class FineWebEduStream(Iterator[list[int]]):
 
         token_buffer = [int(token) for token in state["token_buffer"]]
         emitted_block_count = int(state["emitted_block_count"])
-        dropped_tail_tokens = int(state.get("dropped_tail_tokens", 0))
 
         self._committed_cursor = committed_cursor
         self._source_cursor = committed_cursor
         self._token_buffer = token_buffer
         self._token_buffer_start = 0
         self._emitted_block_count = emitted_block_count
-        self._dropped_tail_tokens = dropped_tail_tokens
 
         self._clear_row_group_cache()
 
@@ -757,7 +765,6 @@ class FineWebEduStream(Iterator[list[int]]):
             "committed_cursor": self._committed_cursor.to_dict(),
             "token_buffer": unread_tokens,
             "emitted_block_count": self._emitted_block_count,
-            "dropped_tail_tokens": self._dropped_tail_tokens,
         }
 
     def _discard_pending_batches(self) -> None:

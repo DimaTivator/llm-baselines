@@ -11,7 +11,7 @@ from .fineweb_streaming_core import (
     Manifest,
     SplitPlan,
     build_manifest,
-    build_snapshot_split_plan,
+    build_snapshot_split_plan_with_val_blocks,
 )
 
 
@@ -32,43 +32,6 @@ def _resolve_dataset_root(datasets_dir: str) -> Path:
             f"No direct-child parquet shards found under {dataset_root}."
         )
     return dataset_root
-
-
-def _materialize_val_blocks(
-    manifest: Manifest,
-    split_plan: SplitPlan,
-    tokenizer_factory: Callable[[], Any],
-    *,
-    block_tokens: int,
-    val_sequences: int,
-    num_token_workers: int,
-    doc_batch_size: int,
-    prefetch_batches: int,
-) -> torch.Tensor:
-    blocks: list[list[int]] = []
-    with FineWebEduStream(
-        manifest,
-        tokenizer_factory,
-        block_tokens=block_tokens,
-        split_plan=split_plan,
-        split="val",
-        rank=0,
-        world_size=1,
-        worker_id=0,
-        num_data_workers=1,
-        num_token_workers=num_token_workers,
-        doc_batch_size=doc_batch_size,
-        prefetch_batches=prefetch_batches,
-    ) as stream:
-        for _ in range(val_sequences):
-            try:
-                blocks.append(next(stream))
-            except StopIteration as exc:
-                raise RuntimeError(
-                    "Validation split exhausted before filling the frozen snapshot."
-                ) from exc
-
-    return torch.tensor(blocks, dtype=torch.long)
 
 
 class FineWebValReader:
@@ -167,7 +130,6 @@ class FineWebTrainReader:
         self._replace_stream()
         wrapped_state = self._stream.state_dict()
         wrapped_state["token_buffer"] = tail_tokens
-        wrapped_state["dropped_tail_tokens"] = 0
         wrapped_state["committed_cursor"] = dict(
             self._initial_stream_state["committed_cursor"]
         )
@@ -229,8 +191,12 @@ def _broadcast_split_plan(
     rank: int,
     world_size: int,
 ) -> SplitPlan:
-    if not (dist.is_initialized() and world_size > 1):
+    if world_size == 1:
         return split_plan
+    assert dist.is_initialized(), (
+        f"FineWeb split-plan broadcast requires torch.distributed to be initialized "
+        f"(world_size={world_size})."
+    )
     payload = [split_plan.to_dict()] if rank == 0 else [None]
     dist.broadcast_object_list(payload, src=0)
     return split_plan if rank == 0 else SplitPlan.from_dict(payload[0])
@@ -241,10 +207,18 @@ def _broadcast_val_blocks(
     *,
     rank: int,
     world_size: int,
-    device: str,
+    device: str | None,
 ) -> torch.Tensor:
-    if not (dist.is_initialized() and world_size > 1):
+    if world_size == 1:
         return val_blocks
+    assert dist.is_initialized(), (
+        f"FineWeb val broadcast requires torch.distributed to be initialized "
+        f"(world_size={world_size})."
+    )
+    assert isinstance(device, str) and device.startswith("cuda"), (
+        f"FineWeb val broadcast requires a CUDA device (got {device!r}); "
+        "DDP uses NCCL, which does not support CPU tensors."
+    )
     shape_payload = [list(val_blocks.shape)] if rank == 0 else [None]
     dist.broadcast_object_list(shape_payload, src=0)
     shape = shape_payload[0]
@@ -277,7 +251,7 @@ def build_fineweb_readers(
     num_token_workers = max(0, args.workers)
 
     if rank == 0:
-        split_plan = build_snapshot_split_plan(
+        plan_with_val = build_snapshot_split_plan_with_val_blocks(
             manifest,
             tokenizer_factory,
             block_tokens=block_tokens,
@@ -285,8 +259,15 @@ def build_fineweb_readers(
             split_seed=DEFAULT_FINEWEB_SPLIT_SEED,
             shuffle_seed=args.data_seed,
         )
+        split_plan = plan_with_val.plan
+        val_blocks = (
+            torch.tensor(plan_with_val.val_blocks, dtype=torch.long)
+            if plan_with_val.val_blocks
+            else torch.empty((0, block_tokens), dtype=torch.long)
+        )
     else:
         split_plan = None
+        val_blocks = None
     split_plan = _broadcast_split_plan(split_plan, rank=rank, world_size=world_size)
 
     train_reader = FineWebTrainReader(
@@ -303,24 +284,11 @@ def build_fineweb_readers(
         prefetch_batches=DEFAULT_PREFETCH_BATCHES,
     )
 
-    if rank == 0:
-        val_blocks = _materialize_val_blocks(
-            manifest,
-            split_plan,
-            tokenizer_factory,
-            block_tokens=block_tokens,
-            val_sequences=val_sequences,
-            num_token_workers=num_token_workers,
-            doc_batch_size=DEFAULT_DOC_BATCH_SIZE,
-            prefetch_batches=DEFAULT_PREFETCH_BATCHES,
-        )
-    else:
-        val_blocks = None
     val_blocks = _broadcast_val_blocks(
         val_blocks,
         rank=rank,
         world_size=world_size,
-        device=getattr(args, "device", "cpu"),
+        device=args.device if world_size > 1 else None,
     )
     val_reader = FineWebValReader(
         val_blocks,
