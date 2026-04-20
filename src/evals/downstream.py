@@ -56,6 +56,16 @@ def _select_latest_metrics(raw_metrics):
     return raw_metrics
 
 
+def _disable_metric_distributed_sync(metric):
+    # Downstream eval runs on rank 0 only inside this trainer, so torchmetrics
+    # must not try to sync metric state across the process group at compute().
+    if hasattr(metric, "sync_on_compute"):
+        metric.sync_on_compute = False
+    if hasattr(metric, "_to_sync"):
+        metric._to_sync = False
+    return metric
+
+
 class DownstreamEvaluator:
     def __init__(self, cfg, tokenizer, tokenizer_identifier):
         self.cfg = cfg
@@ -98,6 +108,7 @@ class DownstreamEvaluator:
                 model_ctx_len=self.cfg.sequence_length,
             )
             metric = ICLMetric(metric_type=task_dataset.metric_type)
+            metric = _disable_metric_distributed_sync(metric)
             if hasattr(metric, "to"):
                 metric = metric.to(self.cfg.device)
             dataloader = DataLoader(
