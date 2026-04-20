@@ -58,6 +58,19 @@ pip install --upgrade pip setuptools
 export PATH=/usr/local/cuda-13.0/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH
 
+# we assume you've python 3.13 and CUDA 13
+pip install -r requirements.txt
+
+# COAT:
+# inside third_party/coat/optimizer/kernels
+pip install --no-build-isolation -e .
+```
+
+### Alternative path
+
+Download appropriate for your cuda torch and flash attn. Other steps are the same
+
+```bash
 # install torch
 pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 
@@ -65,12 +78,10 @@ pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 
 pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu130torch2.9-cp311-cp311-linux_x86_64.whl
 
+# exclude these both from requirements.txt
 pip install -r requirements.txt
-
-# COAT:
-# inside third_party/coat/optimizer/kernels
-pip install --no-build-isolation -e .
 ```
+
 
 ## Credits
 
