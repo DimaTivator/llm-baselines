@@ -133,6 +133,9 @@ class AuxiliaryLMEvaluator:
     def is_enabled(cfg):
         return bool(cfg.lm_eval_enabled and cfg.lm_eval_interval > 0)
 
+    def wandb_metric_globs(self):
+        return [f"aux-lm/{dataset_name}/*" for dataset_name in self.dataset_names]
+
     def _ensure_initialized(self):
         if self._readers is not None:
             return

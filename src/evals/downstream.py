@@ -81,6 +81,9 @@ class DownstreamEvaluator:
     def is_enabled(cfg):
         return bool(cfg.downstream_eval_enabled and cfg.downstream_eval_interval > 0)
 
+    def wandb_metric_globs(self):
+        return [f"downstream/{task_name}/*" for task_name in self.task_names]
+
     def _ensure_initialized(self):
         if self._task_runtimes is not None:
             return

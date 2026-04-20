@@ -98,6 +98,28 @@ def validate_checkpoint_args(args):
     args.inter_ckpts = inter_ckpts
 
 
+def define_wandb_metrics(downstream_evaluator=None, lm_evaluator=None):
+    wandb.define_metric("iter")
+    wandb.define_metric("train/*", step_metric="iter")
+    wandb.define_metric("val/*", step_metric="iter")
+    wandb.define_metric("final-val/*", step_metric="iter")
+    wandb.define_metric("memory/*", step_metric="iter")
+    wandb.define_metric("throughput/*", step_metric="iter")
+    wandb.define_metric("lr", step_metric="iter")
+    wandb.define_metric("iter_dt", step_metric="iter")
+    wandb.define_metric("tok_gpu_sec", step_metric="iter")
+    wandb.define_metric("grad_norm", step_metric="iter")
+    wandb.define_metric("consumed_tokens", step_metric="iter")
+
+    if downstream_evaluator is not None:
+        for metric_glob in downstream_evaluator.wandb_metric_globs():
+            wandb.define_metric(metric_glob, step_metric="iter")
+
+    if lm_evaluator is not None:
+        for metric_glob in lm_evaluator.wandb_metric_globs():
+            wandb.define_metric(metric_glob, step_metric="iter")
+
+
 def main(args):
     distributed_backend = distributed.make_backend_from_args(args)
     args = distributed_backend.get_adjusted_args_for_process(args)
@@ -145,28 +167,6 @@ def main(args):
     wandb_group = get_wandb_group(args)
     args.wandb_group = wandb_group
     exp_dir = Path(args.results_base_folder) / wandb_group / exp_name if not args.no_local_save else None
-    if distributed_backend.is_master_process() and args.wandb:
-        wandb.init(
-            project=args.wandb_project,
-            name=exp_name,
-            group=wandb_group,
-            tags=args.wandb_tags,
-            config=vars(args),
-        )
-        wandb.define_metric("iter")
-        wandb.define_metric("train/*", step_metric="iter")
-        wandb.define_metric("val/*", step_metric="iter")
-        wandb.define_metric("final-val/*", step_metric="iter")
-        wandb.define_metric("downstream/*", step_metric="iter")
-        wandb.define_metric("aux-lm/*", step_metric="iter")
-        wandb.define_metric("memory/*", step_metric="iter")
-        wandb.define_metric("throughput/*", step_metric="iter")
-        wandb.define_metric("lr", step_metric="iter")
-        wandb.define_metric("iter_dt", step_metric="iter")
-        wandb.define_metric("tok_gpu_sec", step_metric="iter")
-        wandb.define_metric("grad_norm", step_metric="iter")
-        wandb.define_metric("consumed_tokens", step_metric="iter")
-
     print(f"Starting Experiment: {exp_name}")
     print(f"Experiment Directory: {exp_dir}")
     print(f"Config:\n{vars(args)}\n")
@@ -188,6 +188,19 @@ def main(args):
         args,
         tokenizer=runtime_tokenizer,
     )
+
+    if distributed_backend.is_master_process() and args.wandb:
+        wandb.init(
+            project=args.wandb_project,
+            name=exp_name,
+            group=wandb_group,
+            tags=args.wandb_tags,
+            config=vars(args),
+        )
+        define_wandb_metrics(
+            downstream_evaluator=downstream_evaluator,
+            lm_evaluator=lm_evaluator,
+        )
 
     model = get_model(args).to(args.device)
     print(f"\nModel:\n{model}")
