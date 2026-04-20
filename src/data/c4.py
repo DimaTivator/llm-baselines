@@ -8,7 +8,14 @@ import os
 import glob
 
 
-hf_tknzr = AutoTokenizer.from_pretrained("gpt2")
+_hf_tknzr = None
+
+
+def _get_hf_tknzr():
+    global _hf_tknzr
+    if _hf_tknzr is None:
+        _hf_tknzr = AutoTokenizer.from_pretrained("gpt2")
+    return _hf_tknzr
 
 
 def _find_json_files(data_dir):
@@ -93,6 +100,7 @@ def get_c4_data_common(datasets_dir, args, num_proc=40):
         split_dataset["val"] = split_dataset.pop("test")
 
         def process(example):
+            hf_tknzr = _get_hf_tknzr()
             ids = hf_tknzr.encode(
                 text=example["text"], add_special_tokens=True,
                 padding=False, truncation=False,

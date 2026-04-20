@@ -5,7 +5,14 @@ from datasets import load_dataset
 import os
 
 
-tknzr = tiktoken.get_encoding("gpt2")
+_tknzr = None
+
+
+def _get_tknzr():
+    global _tknzr
+    if _tknzr is None:
+        _tknzr = tiktoken.get_encoding("gpt2")
+    return _tknzr
 
 
 def get_slimpajama_data(datasets_dir, num_proc=40):
@@ -20,6 +27,7 @@ def get_slimpajama_data(datasets_dir, num_proc=40):
         split_dataset["val"] = split_dataset.pop("test")
 
         def process(example):
+            tknzr = _get_tknzr()
             ids = tknzr.encode_ordinary(
                 example["text"]
             )  # encode_ordinary ignores any special tokens
@@ -76,6 +84,7 @@ def get_slimpajama_chunk1(datasets_dir, num_proc=40):
         split_dataset["val"] = split_dataset.pop("test")
 
         def process(example):
+            tknzr = _get_tknzr()
             ids = tknzr.encode_ordinary(
                 example["text"]
             )  # encode_ordinary ignores any special tokens

@@ -248,7 +248,7 @@ class Llama(GPTBase):
                 "(built by src/main.py when --fp8 is passed)."
             )
         self.qargs = qargs
-        self.tokenizer = tiktoken.get_encoding("gpt2")
+        self._tokenizer = None
 
         self.head_dim  = config.n_embd // config.n_head
         self.freqs_cis = precompute_freqs_cis(self.head_dim, config.sequence_length)

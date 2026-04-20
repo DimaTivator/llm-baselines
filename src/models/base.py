@@ -150,7 +150,7 @@ class GPTBase(nn.Module):
         assert config.vocab_size is not None
         assert config.sequence_length is not None
         self.config = config
-        self.tokenizer = tiktoken.get_encoding("gpt2")
+        self._tokenizer = None
 
         self.transformer = nn.ModuleDict(
             dict(
@@ -177,6 +177,12 @@ class GPTBase(nn.Module):
                     mean=0.0,
                     std=self.config.init_std / math.sqrt(2 * config.n_layer),
                 )
+
+    @property
+    def tokenizer(self):
+        if self._tokenizer is None:
+            self._tokenizer = tiktoken.get_encoding("gpt2")
+        return self._tokenizer
 
     def get_num_params(self, non_embedding=True):
         """

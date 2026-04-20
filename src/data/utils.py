@@ -1,17 +1,9 @@
 from pathlib import Path
 import numpy as np
-from typing import Dict, Union
+from typing import Any, Dict, Union
 import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer
-
-from .shakespeare import get_shakespeare_data
-from .wikitext import get_wikitext_data
-from .arxiv import get_arxiv_2000, get_arxiv_full
-from .openwebtext2 import get_openwebtext2_data
-from .redpajama import get_redpajama_data, get_redpajamav2_data
-from .slimpajama import get_slimpajama_data
-from .c4 import get_c4_data
 
 
 def get_tokenizer(args, verbose=True):
@@ -46,33 +38,54 @@ def get_tokenizer(args, verbose=True):
 
 
 
-def get_dataset(args) -> Union[Dict[str, np.ndarray], Dict[str, any]]:
+def get_dataset(args) -> Union[Dict[str, np.ndarray], Dict[str, Any]]:
     """Fetch the right dataset given by the args.dataset parameter."""
     
     # Traditional datasets (your existing code)
     if args.dataset == "wikitext":
+        from .wikitext import get_wikitext_data
+
         return get_wikitext_data(args.datasets_dir)
     if args.dataset == "shakespeare-char":
+        from .shakespeare import get_shakespeare_data
+
         return get_shakespeare_data(args.datasets_dir)
     if args.dataset == "arxiv2000":
+        from .arxiv import get_arxiv_2000
+
         return get_arxiv_2000(args.datasets_dir)
     if args.dataset == "arxiv":
+        from .arxiv import get_arxiv_full
+
         return get_arxiv_full(args.datasets_dir)
     if args.dataset == "arxiv+wiki":
+        from .arxiv import get_arxiv_full
+        from .wikitext import get_wikitext_data
+
         arxiv_data = get_arxiv_full(args.datasets_dir)
         wiki_data = get_wikitext_data(args.datasets_dir)
         train_data = np.concatenate((arxiv_data["train"], wiki_data["train"]))
         val_data = np.concatenate((arxiv_data["val"], wiki_data["val"]))
         return {"train": train_data, "val": val_data}
     if args.dataset == "openwebtext2":
+        from .openwebtext2 import get_openwebtext2_data
+
         return get_openwebtext2_data(args.datasets_dir)
     if args.dataset == "redpajama":
+        from .redpajama import get_redpajama_data
+
         return get_redpajama_data(args.datasets_dir)
     if args.dataset == "redpajamav2":
+        from .redpajama import get_redpajamav2_data
+
         return get_redpajamav2_data(args.datasets_dir)
     if args.dataset == "slimpajama":
+        from .slimpajama import get_slimpajama_data
+
         return get_slimpajama_data(args.datasets_dir)
     if args.dataset == "c4":
+        from .c4 import get_c4_data
+
         return get_c4_data(args.datasets_dir, args, 128)
     else:
         raise NotImplementedError(f"Unknown dataset key '{args.dataset}'")
