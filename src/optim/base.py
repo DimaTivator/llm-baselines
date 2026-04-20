@@ -405,22 +405,30 @@ def train(
                 )
 
         if downstream_evaluator is not None and downstream_evaluator.should_run(curr_iter):
-            downstream_logs = downstream_evaluator.evaluate(
-                curr_iter,
-                model,
-                type_ctx,
-                distributed_backend,
-            )
+            downstream_logs = None
+            distributed_backend.barrier()
+            if distributed_backend.is_master_process():
+                downstream_logs = downstream_evaluator.evaluate(
+                    curr_iter,
+                    model,
+                    type_ctx,
+                    distributed_backend,
+                )
+            distributed_backend.barrier()
             if downstream_logs is not None:
                 stats["downstream"].append(downstream_logs)
 
         if lm_evaluator is not None and lm_evaluator.should_run(curr_iter):
-            lm_logs = lm_evaluator.evaluate(
-                curr_iter,
-                model,
-                type_ctx,
-                distributed_backend,
-            )
+            lm_logs = None
+            distributed_backend.barrier()
+            if distributed_backend.is_master_process():
+                lm_logs = lm_evaluator.evaluate(
+                    curr_iter,
+                    model,
+                    type_ctx,
+                    distributed_backend,
+                )
+            distributed_backend.barrier()
             if lm_logs is not None:
                 stats["aux_lm"].append(lm_logs)
 
