@@ -21,30 +21,43 @@ ACC_STEPS=8    # 16 * 8 * 1 = 128
 ITERATIONS=39250
 WARMUP=3925    # 10% of iterations
 
-# ─── BAdam-specific ───────────────────────────────────────────────────────────
-BLOCK_SIZE=1              # number of transformer layers per trainable block
-UPDATE_GAP=100            # steps between block switches; paper recommends min(max(n/(B*D),50),100)
-                          # n=~5M samples, B=128, D=12 → 100 (capped)
-SWITCH_MODE=random        # random | ascending | descending | fixed
-                          # paper GitHub default is random; ascending used for RoBERTa classification
-BADAM_VERBOSE=1
+# ─── HybridLoRA-specific ─────────────────────────────────────────────────────
+# rank = 0 -> auto-computed as density * n_embd (e.g. 0.25 * 1024 = 256)
+# DENSITY=0.25
+HYBRID_LORA_RANK=32         # 0 = auto from density
+HYBRID_LORA_ALPHA=1.0
+HYBRID_LORA_SCOPE="all"     # all | attn | mlp
+HYBRID_LORA_LR_SCALE=1.0    # LoRA adapter LR = base LR * this factor
+
+# Leave empty to target all Linear layers in HYBRID_LORA_SCOPE.
+HYBRID_LORA_TARGET_MODULES=""
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
 LR_LIST=(1e-4 5e-4 1e-3 2e-3)
 WD_LIST=(0.1)
+BETA1_LIST=(0.9)
 BETA2_LIST=(0.999)
-DTYPE_LIST=(bfloat16)
+BASE_OPT_LIST=(sgd)
+LORA_OPT_LIST=(riemannian_sgd)
 
 # ─── Sweep ───────────────────────────────────────────────────────────────────
-for DTYPE in "${DTYPE_LIST[@]}"; do
-for LR in "${LR_LIST[@]}"; do   
+for BASE_OPT in "${BASE_OPT_LIST[@]}"; do
+for LORA_OPT in "${LORA_OPT_LIST[@]}"; do
+for LR in "${LR_LIST[@]}"; do
 for WD in "${WD_LIST[@]}"; do
+for BETA1 in "${BETA1_LIST[@]}"; do
 for BETA2 in "${BETA2_LIST[@]}"; do
 
-    EXP_NAME="llama257M_badam_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_bs${BLOCK_SIZE}_fineweb"
+    EXP_NAME="llama257M_hybrid_lora_base${BASE_OPT}_lora${LORA_OPT}_scope${HYBRID_LORA_SCOPE}_d${DENSITY}_lr${LR}_wd${WD}_b1${BETA1}_b2${BETA2}_fineweb"
     echo "==============================================================="
     echo "Starting: ${EXP_NAME}"
     echo "==============================================================="
+
+    # Build optional target-modules flag.
+    TARGET_MODULES_FLAG=""
+    if [[ -n "${HYBRID_LORA_TARGET_MODULES}" ]]; then
+        TARGET_MODULES_FLAG="--hybrid_lora_target_modules ${HYBRID_LORA_TARGET_MODULES}"
+    fi
 
     torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
         --distributed-backend nccl \
@@ -61,19 +74,23 @@ for BETA2 in "${BETA2_LIST[@]}"; do
         --n-embd  ${N_EMBD} \
         --n-head  ${N_HEAD} \
         --multiple-of ${MULTIPLE_OF} \
-        --dtype ${DTYPE} \
+        --dtype bfloat16 \
         \
-        --opt badam \
+        --opt hybrid_lora \
         --lr ${LR} \
         --weight-decay ${WD} \
-        --beta1 0.9 \
+        --beta1 ${BETA1} \
         --beta2 ${BETA2} \
         --grad-clip 1.0 \
         \
-        --update_gap ${UPDATE_GAP} \
-        --badam_block_size ${BLOCK_SIZE} \
-        --badam_switch_mode ${SWITCH_MODE} \
-        --badam_verbose ${BADAM_VERBOSE} \
+        --density ${DENSITY} \
+        --hybrid_lora_rank ${HYBRID_LORA_RANK} \
+        --hybrid_lora_alpha ${HYBRID_LORA_ALPHA} \
+        --hybrid_lora_scope ${HYBRID_LORA_SCOPE} \
+        --hybrid_lora_base_opt ${BASE_OPT} \
+        --hybrid_lora_lora_opt ${LORA_OPT} \
+        --hybrid_lora_lora_lr_scale ${HYBRID_LORA_LR_SCALE} \
+        ${TARGET_MODULES_FLAG} \
         \
         --scheduler cos \
         --warmup-steps ${WARMUP} \
@@ -98,6 +115,8 @@ for BETA2 in "${BETA2_LIST[@]}"; do
         --wandb \
         --wandb-project "${WANDB_PROJECT}"
 
+done
+done
 done
 done
 done

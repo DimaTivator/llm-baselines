@@ -100,6 +100,7 @@ def parse_args(base_parser, args, namespace):
             "slim_adam",  # SlimAdam: memory-efficient Adam with compressed second moments
             "riemannian_adamw",  # Riemannian Adam on Stiefel manifold (LoRA factors)
             "riemannian_sgd",   # Riemannian SGD on Stiefel manifold (LoRA factors)
+            "hybrid_lora",      # Full-weight (stateless) + LoRA adapter (stateful) hybrid
         ],
     )
     parser.add_argument("--batch-size", default=32, type=int)
@@ -489,6 +490,30 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--riemannian_sgd_momentum", type=float, default=0.0,
         help="Momentum for riemannian_sgd (maps to beta1). "
              "For riemannian_adamw use --beta1/--beta2.")
+
+    # HybridLoRA parameters
+    parser.add_argument("--hybrid_lora_rank", type=int, default=0,
+        help="LoRA adapter rank r. If 0, computed from --density * n_embd.")
+    parser.add_argument("--hybrid_lora_alpha", type=float, default=1.0,
+        help="LoRA scaling factor (effective scale = alpha / rank).")
+    parser.add_argument("--hybrid_lora_scope", type=str, default="all",
+        choices=["all", "attn", "mlp"],
+        help="Which sub-modules to attach LoRA adapters to.")
+    parser.add_argument("--hybrid_lora_target_modules", nargs="+", default=None,
+        help="Optional list of substrings to further filter target layers by child "
+             "module name (e.g. --hybrid_lora_target_modules q_proj k_proj v_proj). "
+             "When omitted, all Linear layers in --hybrid_lora_scope are targeted.")
+    parser.add_argument("--hybrid_lora_base_opt", type=str, default="sgd",
+        choices=["sgd", "lion", "adamw"],
+        help="Stateless optimizer for base model weights.")
+    parser.add_argument("--hybrid_lora_lora_opt", type=str, default="adamw",
+        choices=["adamw", "adam", "riemannian_adamw", "riemannian_sgd"],
+        help="Optimizer for LoRA adapter factors. "
+             "adamw/adam: standard stateful optimizers. "
+             "riemannian_adamw/riemannian_sgd: Riemannian optimizer on the Stiefel manifold.")
+    parser.add_argument("--hybrid_lora_lora_lr_scale", type=float, default=1.0,
+        help="LR scale for LoRA adapter params relative to --lr "
+             "(lora_lr = lr * hybrid_lora_lora_lr_scale).")
 
     # Local Saving
     parser.add_argument("--no-local-save", action="store_true", help="Disable saving checkpoints and results to local disk.")

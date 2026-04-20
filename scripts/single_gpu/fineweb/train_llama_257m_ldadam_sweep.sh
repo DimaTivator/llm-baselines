@@ -39,7 +39,7 @@ for LR in "${LR_LIST[@]}"; do
 for WD in "${WD_LIST[@]}"; do
 for BETA2 in "${BETA2_LIST[@]}"; do
 
-    EXP_NAME="test_llama257M_ldadam_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_fineweb"
+    EXP_NAME="llama257M_ldadam_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_fineweb"
     echo "==============================================================="
     echo "Starting: ${EXP_NAME}"
     echo "==============================================================="

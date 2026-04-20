@@ -27,7 +27,7 @@ UPDATE_GAP=50
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
 # LR_LIST=(1e-4 5e-4 1e-3 2e-3)
-LR_LIST=(1e-4 1e-3 2e-3)
+LR_LIST=(1e-4)
 WD_LIST=(0.1)
 BETA2_LIST=(0.999)
 DTYPE_LIST=(bfloat16)
@@ -38,7 +38,7 @@ for LR in "${LR_LIST[@]}"; do
 for WD in "${WD_LIST[@]}"; do
 for BETA2 in "${BETA2_LIST[@]}"; do
 
-    EXP_NAME="llama257M_galore_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_fineweb"
+    EXP_NAME="TEST_EGOR_llama257M_galore_${DTYPE}_lr${LR}_wd${WD}_b2${BETA2}_fineweb"
     echo "==============================================================="
     echo "Starting: ${EXP_NAME}"
     echo "==============================================================="
