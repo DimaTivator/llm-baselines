@@ -22,7 +22,7 @@ INTER_CKPTS=(67911)
 BATCH_SIZE=16
 ACC_STEPS=8
 LR=1e-3
-WEIGHT_DECAY=0.1
+WEIGHT_DECAY=1e-4
 
 torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
     --distributed-backend nccl \
