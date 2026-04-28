@@ -37,6 +37,7 @@ fp8-pretrain/
 │   │       ├── MARS/
 │   │       ├── dion/
 │   │       └── soap/
+│   │       └── swan/
 │   ├── logger/                # WandB + dynamics logger
 │   └── distributed/           # DDP backend abstraction
 └── third_party/

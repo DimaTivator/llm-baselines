@@ -128,7 +128,7 @@ def parse_args(base_parser, args, namespace):
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
             "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
-            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  # SOTA
+            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan",  # SOTA
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
@@ -529,6 +529,10 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--riemannian_sgd_momentum", type=float, default=0.0,
         help="Momentum for riemannian_sgd (maps to beta1). "
              "For riemannian_adamw use --beta1/--beta2.")
+    # SWAN
+    parser.add_argument("--swan_ns_step_size", type=float, default=0.8)
+    parser.add_argument("--swan_no_rescale", action='store_true', help="Disable gradient norm rescaling in SWAN")
+    parser.add_argument("--swan_min_numel_whitening", type=int, default=1)
 
     # Local Saving
     parser.add_argument("--no-local-save", action="store_true", help="Disable saving checkpoints and results to local disk.")
