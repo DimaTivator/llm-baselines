@@ -35,17 +35,6 @@ def parse_args(base_parser, args, namespace):
 
     # Checkpointing
     parser.add_argument("--results-base-folder", default="./exps", type=str)
-    parser.add_argument(
-        "--checkpoint-base-folder",
-        default=None,
-        type=str,
-        help=(
-            "Optional base folder for local checkpoint staging/saving. "
-            "When set, checkpoints are written under "
-            "<checkpoint-base-folder>/<wandb_group>/<experiment_name>/ckpts "
-            "instead of --results-base-folder."
-        ),
-    )
     parser.add_argument("--permanent-ckpt-interval", default=0, type=int)
     parser.add_argument(
         "--inter-ckpts",
@@ -86,17 +75,7 @@ def parse_args(base_parser, args, namespace):
             "upload succeeds. Requires --upload-inter-ckpts-to."
         ),
     )
-    parser.add_argument(
-        "--resume-from",
-        default=None,
-        type=str,
-        help=(
-            "Checkpoint directory to resume from. Supports either a local path "
-            "(e.g. '/path/to/ckpt_dir') or an HF URI "
-            "(e.g. 'hf://erinya/efficient_pretrain_checkpoints/intermediate-checkpoints/"
-            "llama-12L8H_fineweb_39k/galore_lr1e-4_wd0.1/inter-ckpt-20000')."
-        ),
-    )
+    parser.add_argument("--resume-from", default=None, type=str)
     parser.add_argument(
         "--decay-from-checkpoint",
         action="store_true",
@@ -213,33 +192,6 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--data-in-ram", action="store_true")
     parser.add_argument("--local_data", action="store_true", help="For local debug with C4 samples")
     parser.add_argument("--local_data_path", type=str, default=None, help="Local path to data folder for local debug with C4")
-    parser.add_argument(
-        "--fineweb-source",
-        default="auto",
-        choices=["auto", "local", "hf"],
-        help=(
-            "FineWeb source: local parquet shards, exact Hugging Face parquet "
-            "streaming, or auto local-then-HF fallback."
-        ),
-    )
-    parser.add_argument(
-        "--fineweb-hf-repo-id",
-        default="HuggingFaceFW/fineweb-edu",
-        help="Hugging Face dataset repo for exact FineWeb parquet streaming.",
-    )
-    parser.add_argument(
-        "--fineweb-hf-data-prefix",
-        default="sample/100BT",
-        help="Path prefix inside the Hugging Face FineWeb dataset repo.",
-    )
-    parser.add_argument(
-        "--fineweb-hf-revision",
-        default="main",
-        help=(
-            "Requested Hugging Face revision for FineWeb. It is resolved to a "
-            "commit SHA and stored in checkpoints for exact resume."
-        ),
-    )
 
     # Model
     parser.add_argument(
