@@ -128,7 +128,7 @@ def parse_args(base_parser, args, namespace):
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
             "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
-            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan",  # SOTA
+            "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
             "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
             "loro", "loro_adpt",  # LORO low-rank optimiser
@@ -325,6 +325,9 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--proj_norms", default=False, action='store_true')
     parser.add_argument("--proj_embeds", default=False, action='store_true')
     parser.add_argument("--proj_logits", default=False, action='store_true')
+
+    # Shampoo parameters
+    # parser.add_argument("--shampoo_decay", type=float, default=0.9)
 
     # Galore parameters
     parser.add_argument("--proj_side", type=str, default="std", choices=["std", "reverse_std", "right", "left", "full"])
