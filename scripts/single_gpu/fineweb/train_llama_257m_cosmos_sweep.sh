@@ -16,8 +16,8 @@ MULTIPLE_OF=256
 
 # ─── Training constants ──────────────────────────────────────────────────────
 # total_batch_size = batch_size * acc_steps * ngpus = 128
-BATCH_SIZE=16
-ACC_STEPS=8    # 16 * 8 * 1 = 128
+BATCH_SIZE=64
+ACC_STEPS=2    
 ITERATIONS=39250
 WARMUP=3925    # 10% of iterations
 
