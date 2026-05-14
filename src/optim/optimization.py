@@ -133,8 +133,11 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             param_groups,
             lr=args.lr,
             betas=(args.beta1, args.beta2),
+            beta3=args.shampoo_beta3,
             epsilon=args.eps,
             weight_decay=args.weight_decay,
+            precondition_frequency=args.shampoo_preconditioner_frequency,
+            max_preconditioner_dim=args.shampoo_max_preconditioner_dim,
         )
     elif optimizer_name == "soap":
         optimizer = SOAP(

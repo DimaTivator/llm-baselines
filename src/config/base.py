@@ -328,6 +328,9 @@ def parse_args(base_parser, args, namespace):
 
     # Shampoo parameters
     # parser.add_argument("--shampoo_decay", type=float, default=0.9)
+    parser.add_argument("--shampoo_preconditioner_frequency", type=int, default=100)
+    parser.add_argument("--shampoo_max_preconditioner_dim", type=int, default=1024)
+    parser.add_argument("--shampoo_beta3", type=float, default=-1.0)
 
     # Galore parameters
     parser.add_argument("--proj_side", type=str, default="std", choices=["std", "reverse_std", "right", "left", "full"])
