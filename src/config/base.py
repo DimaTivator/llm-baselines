@@ -103,6 +103,7 @@ def parse_args(base_parser, args, namespace):
             "scion-light",
             "d-muon",
             "muon-pytorch",  # works only with torch>=2.9
+            "adamw-spectral-l1-reg",
         ],
     )
     parser.add_argument("--batch_size", default=50, type=int)
@@ -328,5 +329,7 @@ def parse_args(base_parser, args, namespace):
     )  # mup arguments --- the base model width that mup has been configured on
     parser.add_argument("--scale_base_model", default=256, type=int)
     parser.add_argument("--scale_depth", default=1.4, type=float)
+
+    parser.add_argument("--spectral_l1_reg_coef", default=0.1, type=float)
 
     return parser.parse_args(args, namespace)

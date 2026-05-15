@@ -9,12 +9,18 @@ import wandb
 import yaml
 
 from logger.logger import DynamicsLogger
-from optim.weight_averaging import (ExponentialWeightAverager, WeightAverager,
-                                    eval_ewa, eval_wa)
+from optim.weight_averaging import (
+    ExponentialWeightAverager,
+    WeightAverager,
+    eval_ewa,
+    eval_wa,
+)
 
-from .utils import (eval, get_batch, get_parameter_norms, load_checkpoint,
-                    load_worker_state, log_prodigy_lr, save_checkpoint,
-                    save_worker_state, visualize_routing)
+from .utils import (
+    eval, get_batch, get_parameter_norms, load_checkpoint,
+    load_worker_state, log_prodigy_lr, save_checkpoint,
+    save_worker_state, visualize_routing,
+)
 
 
 def train(

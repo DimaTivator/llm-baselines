@@ -30,6 +30,7 @@ from optim.scion import Scion, ScionLight, scion_partitions
 from optim.sign import Signum
 from optim.soap import SOAP
 from optim.sophia import SophiaG
+from optim.adamw_spectral_L1_reg import AdamWSpectralL1Reg
 
 
 def get_args():
@@ -341,6 +342,14 @@ def main(args, parser):
             eps=1e-7,  # muon pytorch uses smaller eps
             adjust_lr_fn=None,  # to make the orthogonalized update have a consistent RMS across rectangular matrices
         )
+    elif args.opt == "adamw-spectral-l1-reg":
+        opt = AdamWSpectralL1Reg(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            spectral_l1_reg_coef=args.spectral_l1_reg_coef,
+        )
     else:
         opt = torch.optim.SGD(
             group_specs,
@@ -365,8 +374,9 @@ def main(args, parser):
                         group.get("lr", args.lr) for group in group_specs
                     ],  # it was args.lr
                     total_steps=args.iterations,
-                    pct_start=args.warmup_steps
-                    / args.iterations,  # it was args.warmup_percent
+                    pct_start=(
+                        args.warmup_steps / args.iterations  # was args.warmup_percent
+                    ),
                     anneal_strategy=args.scheduler,
                     cycle_momentum=False,
                     div_factor=1e2,
@@ -411,8 +421,8 @@ def main(args, parser):
         if not args.auto_resume:
             raise ValueError(
                 f"The experiment dir {exp_dir} already exists. "
-                + "To resume training, set auto_resume=True. "
-                + "Otherwise, specify a different experiment name. "
+                f"To resume training, set auto_resume=True. "
+                f"Otherwise, specify a different experiment name. "
             )
         else:
             # Auto resume overwrites resume_from
