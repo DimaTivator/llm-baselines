@@ -14,7 +14,7 @@ from .memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH as SLIM_ADAM_DEFA
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
-from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN
+from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN, DistributedShampoo
 
 
 def get_optimizer(param_groups, args, model=None, qargs=None):
@@ -127,6 +127,17 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             eps=args.eps,
             weight_decay=args.weight_decay,
             decouple=args.adopt_decouple
+        )
+    elif optimizer_name == "shampoo":
+        optimizer = DistributedShampoo(
+            param_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            beta3=args.shampoo_beta3,
+            epsilon=args.eps,
+            weight_decay=args.weight_decay,
+            precondition_frequency=args.shampoo_preconditioner_frequency,
+            max_preconditioner_dim=args.shampoo_max_preconditioner_dim,
         )
     elif optimizer_name == "soap":
         optimizer = SOAP(
