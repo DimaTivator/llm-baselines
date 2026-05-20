@@ -195,7 +195,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
                 group["scale_type"] = args.apollo_scale_type
 
                 group["proj_type"] = args.proj_side
-        optimizer = APOLLOAdamW(param_groups, lr=args.lr, weight_decay=args.weight_decay, scale_front=args.apollo_scale_front)
+        optimizer = APOLLOAdamW(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, scale_front=args.apollo_scale_front)
     elif optimizer_name in ("ldadam", "ldadamw"):
         for group in param_groups:
             if group.get("is_proj_params", False):
