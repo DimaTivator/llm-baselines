@@ -94,7 +94,7 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
                 # Apply regularization to weight
                 if len(p.data.shape) == 2:
                     l1_weight_reg = zeropower_via_newtonschulz5(p.data, 5)
-                    p.data.mul_(1 - lr * wd)  # weight decay
+                    # p.data.mul_(1 - lr * wd)  # weight decay
                     p.data.add_(
                         l1_weight_reg, alpha=-(lr * spectral_l1_reg_coef)
                     )

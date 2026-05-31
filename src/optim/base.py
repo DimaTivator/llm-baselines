@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 import wandb
 import yaml
+from tqdm import tqdm
 
 from logger.logger import DynamicsLogger
 from optim.weight_averaging import (
@@ -14,6 +15,12 @@ from optim.weight_averaging import (
     WeightAverager,
     eval_ewa,
     eval_wa,
+)
+
+from models.compress import (
+    grad_effective_ranks,
+    model_effective_ranks,
+    optimizer_state_effective_ranks,
 )
 
 from .utils import (
@@ -31,6 +38,7 @@ def train(
     exp_dir,
     distributed_backend,
     cfg,
+    downstream_evaluator=None,
 ):
     not_compiled_model = model
     if cfg.compile:
@@ -107,10 +115,12 @@ def train(
     substep = curr_iter * cfg.acc_steps
     train_reader, val_reader = datareaders["train"], datareaders["val"]
     train_reader.set_step(substep)
-    stats = {"train_loss": [], "val_loss": [], "val_pp": [], "val_acc": []}
+    stats = {"train_loss": [], "val_loss": [], "val_pp": [], "val_acc": [], "downstream": []}
     grad_norms = []
+    _pending_grad_er: dict[str, float] = {}
     model.train()
 
+    pbar = tqdm(total=cfg.iterations, initial=curr_iter, desc="Training", dynamic_ncols=True)
     while curr_iter <= cfg.iterations:
         # Save permanent checkpoint
         if cfg.permanent_ckpt_interval > 0:
@@ -173,6 +183,13 @@ def train(
                     full_eval=(curr_iter in cfg.full_eval_at),
                 )
 
+        if downstream_evaluator is not None and downstream_evaluator.should_run(curr_iter):
+            downstream_logs = downstream_evaluator.evaluate(
+                curr_iter, model, type_ctx, distributed_backend
+            )
+            if downstream_logs is not None:
+                stats["downstream"].append(downstream_logs)
+
         if curr_iter == cfg.iterations:
             # Save checkpoints and evaluate at final iteration, but no need to train further
             break
@@ -204,6 +221,33 @@ def train(
                 )
             grad_norms.append(grad_norm)
 
+        if getattr(cfg, "wd_schedule", "none") != "none" and cfg.wd_final is not None:
+            t = curr_iter / cfg.iterations
+            if cfg.wd_schedule == "linear":
+                current_wd = cfg.weight_decay + (cfg.wd_final - cfg.weight_decay) * t
+            else:  # cos
+                current_wd = cfg.wd_final + 0.5 * (cfg.weight_decay - cfg.wd_final) * (
+                    1 + math.cos(math.pi * t)
+                )
+            for g in opt.param_groups:
+                g["weight_decay"] = current_wd
+
+        if (
+            getattr(cfg, "spectral_l1_reg_schedule", "none") != "none"
+            and getattr(cfg, "spectral_l1_reg_coef_final", None) is not None
+        ):
+            t = curr_iter / cfg.iterations
+            coef_init = cfg.spectral_l1_reg_coef
+            coef_final = cfg.spectral_l1_reg_coef_final
+            if cfg.spectral_l1_reg_schedule == "linear":
+                current_coef = coef_init + (coef_final - coef_init) * t
+            else:  # cos
+                current_coef = coef_final + 0.5 * (coef_init - coef_final) * (
+                    1 + math.cos(math.pi * t)
+                )
+            for g in opt.param_groups:
+                g["spectral_l1_reg_coef"] = current_coef
+
         if cfg.opt == "sf-sgd" or cfg.opt == "sf-adamw":
             opt.train()
         (
@@ -213,6 +257,27 @@ def train(
         )
         if cfg.scheduler != "none":
             scheduler.step()
+
+        if (
+            cfg.opt == "adamw-spectral-l1-reg"
+            and getattr(cfg, "spectral_l1_reg_switch_step", None) is not None
+            and getattr(cfg, "spectral_l1_reg_coef_final", None) is not None
+            and curr_iter + 1 == cfg.spectral_l1_reg_switch_step
+        ):
+            for g in opt.param_groups:
+                g["spectral_l1_reg_coef"] = cfg.spectral_l1_reg_coef_final
+
+        _pending_grad_er = {}
+        if (
+            cfg.wandb
+            and cfg.effective_rank_interval > 0
+            and (curr_iter + 1) % cfg.effective_rank_interval == 0
+            and distributed_backend.is_master_process()
+        ):
+            _pending_grad_er = grad_effective_ranks(
+                distributed_backend.get_raw_model(model)
+            )
+
         if cfg.opt == "sophiag":
             opt.zero_grad(set_to_none=True)
             if curr_iter % cfg.precondition_frequency == cfg.precondition_frequency - 1:
@@ -246,6 +311,7 @@ def train(
         dt = (time.perf_counter_ns() - t_start) / 1e9
 
         curr_iter += 1
+        pbar.update(1)
 
         if (
             cfg.log_interval
@@ -253,6 +319,7 @@ def train(
             and distributed_backend.is_master_process()  # Only log on master rank
         ):
             train_loss = loss.detach().cpu().item() * cfg.acc_steps
+            pbar.set_postfix(loss=f"{train_loss:.3f}", lr=f"{opt.param_groups[0]['lr']:.2e}")
             train_aux_losses = {
                 f"train/{k}": v for k, v in outputs["aux_losses"].items()
             }
@@ -277,6 +344,9 @@ def train(
                     "train/loss": train_loss,
                     "train/perplexity": 2.71828**train_loss,
                     "lr": current_lrs[0],
+                    "weight_decay": opt.param_groups[0].get("weight_decay", 0.0),
+                    **({"spectral_l1_reg_coef": opt.param_groups[0]["spectral_l1_reg_coef"]}
+                       if "spectral_l1_reg_coef" in opt.param_groups[0] else {}),
                     "iter_dt": dt,
                     "max_grad_norm": max(grad_norms).item() if grad_norms else 0,
                     "mean_grad_norm": (
@@ -297,6 +367,23 @@ def train(
 
             grad_norms = []
 
+        if (
+            cfg.wandb
+            and cfg.effective_rank_interval > 0
+            and curr_iter % cfg.effective_rank_interval == 0
+            and distributed_backend.is_master_process()
+        ):
+            raw_model = distributed_backend.get_raw_model(model)
+            er_logs = model_effective_ranks(raw_model)
+            opt_er_logs = optimizer_state_effective_ranks(raw_model, opt)
+            wandb.log({
+                "iter": curr_iter,
+                "effective_rank/mean_weighted": er_logs.get("effective_rank/mean_weighted", 0.0),
+                **_pending_grad_er,
+                **opt_er_logs,
+            })
+
+    pbar.close()
     return stats
 
 

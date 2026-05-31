@@ -18,6 +18,18 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--eval_interval", default=200, type=int)
     parser.add_argument("--full_eval_at", nargs="+", type=int)
     parser.add_argument("--eval_batches", default=64, type=int)
+    parser.add_argument("--eval_batch_size", default=None, type=int,
+                        help="Batch size for evaluation (defaults to --batch_size if not set).")
+    parser.add_argument("--downstream_eval_enabled", action="store_true",
+                        help="Enable downstream ICL evaluation via ai2-olmo-eval.")
+    parser.add_argument("--downstream_eval_interval", default=0, type=int,
+                        help="Run downstream eval every N iterations (0 = disabled).")
+    parser.add_argument("--downstream_task_group", default=None, type=str,
+                        help="Predefined task group for downstream eval (e.g. 'basic_v1').")
+    parser.add_argument("--downstream_tasks", nargs="+", default=None, type=str,
+                        help="Explicit downstream task names (combined with --downstream_task_group).")
+    parser.add_argument("--eval_cache_dir", default=None, type=none_or_str,
+                        help="Directory for eval caches. Defaults to --datasets_dir if not set.")
     parser.add_argument("--device", default="cuda:0", type=str)
     parser.add_argument(
         "--distributed_backend",
@@ -104,6 +116,7 @@ def parse_args(base_parser, args, namespace):
             "d-muon",
             "muon-pytorch",  # works only with torch>=2.9
             "adamw-spectral-l1-reg",
+            "numuon",
         ],
     )
     parser.add_argument("--batch_size", default=50, type=int)
@@ -126,6 +139,15 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--nesterov", default=False, type=bool)
     parser.add_argument("--muon_ns_steps", default=5, type=int)
     parser.add_argument("--muon_lr_factor", default=1.0, type=float)
+    parser.add_argument("--numuon_rank_fraction", default=1.0, type=float,
+                        help="Initial fraction of singular directions used by nuMuon (0 < r <= 1).")
+    parser.add_argument("--numuon_rank_fraction_final", default=None, type=float,
+                        help="Final rank fraction for nuMuon schedule. None = fixed.")
+    parser.add_argument("--numuon_rank_schedule", default="cosine",
+                        choices=["fixed", "cosine", "linear"],
+                        help="Schedule for nuMuon rank fraction annealing.")
+    parser.add_argument("--numuon_svd_niter", default=2, type=int,
+                        help="Randomized SVD power iterations for nuMuon.")
     parser.add_argument("--adema_beta3", default=0.9, type=float)
     parser.add_argument("--adema_alpha", default=2.0, type=float)
     parser.add_argument("--adema_beta3_warmup", default=None, type=int)
@@ -210,6 +232,10 @@ def parse_args(base_parser, args, namespace):
 
     # Dataset params
     parser.add_argument("--datasets_dir", type=str, default="./src/data/datasets/")
+    parser.add_argument("--finewebedu_max_files", default=None, type=int,
+                        help="Limit number of parquet files to tokenize (None = all).")
+    parser.add_argument("--tokenized_data_dir", default=None, type=none_or_str,
+                        help="Directory to store tokenized .bin files. Defaults to the parquet directory.")
     parser.add_argument(
         "--dataset",
         default="slimpajama",
@@ -331,5 +357,32 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--scale_depth", default=1.4, type=float)
 
     parser.add_argument("--spectral_l1_reg_coef", default=0.1, type=float)
+    parser.add_argument("--wd_schedule", default="none", choices=["none", "linear", "cos"],
+                        help="Schedule for weight decay: decay from weight_decay to wd_final.")
+    parser.add_argument("--wd_final", default=None, type=float,
+                        help="Final weight decay value for wd_schedule.")
+    parser.add_argument("--spectral_l1_reg_switch_step", default=None, type=int,
+                        help="Step at which to switch spectral_l1_reg_coef to spectral_l1_reg_coef_final.")
+    parser.add_argument("--spectral_l1_reg_coef_final", default=None, type=float,
+                        help="Final spectral_l1_reg_coef for schedule or switch.")
+    parser.add_argument("--spectral_l1_reg_schedule", default="none", choices=["none", "linear", "cos"],
+                        help="Schedule for spectral_l1_reg_coef: decay from spectral_l1_reg_coef to spectral_l1_reg_coef_final.")
+
+    # Effective rank logging
+    parser.add_argument(
+        "--effective_rank_interval",
+        default=0,
+        type=int,
+        help="Log effective ranks of weight matrices every N iterations (0 = disabled).",
+    )
+
+    # Post-training SVD compression
+    parser.add_argument(
+        "--svd_rank",
+        default=None,
+        type=int,
+        help="If set, compress all non-embedding Linear layers via truncated SVD "
+             "to this rank after training and save the compressed model.",
+    )
 
     return parser.parse_args(args, namespace)

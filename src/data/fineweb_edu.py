@@ -1,3 +1,4 @@
+import glob
 import os
 
 import numpy as np
@@ -8,19 +9,48 @@ from tqdm import tqdm
 tknzr = tiktoken.get_encoding("gpt2")
 
 
-def get_fineweb_edu_data(datasets_dir, num_proc=40):
-    """To change the cache dir, run `export HF_HOME=/path/to/cache/` before running the code."""
-    FWEB_DATA_PATH = os.path.join(datasets_dir, "fineweb-edu-100BT/")
+def get_fineweb_edu_data(datasets_dir, num_proc=5, max_files=None, tokenized_data_dir=None):
+    """To change the cache dir, run `export HF_HOME=/path/to/cache/` before running the code.
+
+    Local parquet files are searched in this order:
+      1. directly in datasets_dir (user points straight at the parquet folder)
+      2. datasets_dir/fineweb-edu-100BT/sample/100BT/  (default layout)
+    Tokenized .bin files are written next to the parquets that were found,
+    or into datasets_dir/fineweb-edu-100BT/ when downloading from HuggingFace.
+    """
+    # Locate parquet files
+    local_files = sorted(glob.glob(os.path.join(datasets_dir, "*.parquet")))
+    if local_files:
+        FWEB_DATA_PATH = datasets_dir
+    else:
+        fallback_dir = os.path.join(datasets_dir, "fineweb-edu-100BT", "sample", "100BT")
+        local_files = sorted(glob.glob(os.path.join(fallback_dir, "*.parquet")))
+        FWEB_DATA_PATH = os.path.join(datasets_dir, "fineweb-edu-100BT")
+
+    if tokenized_data_dir is not None:
+        FWEB_DATA_PATH = tokenized_data_dir
+
     if not os.path.exists(os.path.join(FWEB_DATA_PATH, "train.bin")):
         os.makedirs(FWEB_DATA_PATH, exist_ok=True)
 
-        dataset = load_dataset(
-            "HuggingFaceFW/fineweb-edu",
-            name="sample-100BT",
-            split="train",
-            streaming=False,
-            verification_mode="no_checks",
-        )
+        if local_files:
+            if max_files is not None:
+                local_files = local_files[:max_files]
+            print(f"Found {len(local_files)} local parquet files, loading from disk.")
+            dataset = load_dataset(
+                "parquet",
+                data_files={"train": local_files},
+                split="train",
+                verification_mode="no_checks",
+            )
+        else:
+            dataset = load_dataset(
+                "HuggingFaceFW/fineweb-edu",
+                name="sample-100BT",
+                split="train",
+                streaming=False,
+                verification_mode="no_checks",
+            )
 
         split_dataset = dataset.train_test_split(
             test_size=0.0001, seed=2357, shuffle=True

@@ -13,7 +13,9 @@ import wandb
 
 import config
 import distributed
-from data.utils import DataReader, get_dataset
+from data.utils import DataReader, get_dataset, get_tokenizer
+from evals import build_evaluators
+from models.compress import compress_model_svd, compression_stats
 from models.utils import get_model
 from optim.adafactor import Adafactor
 from optim.ademamix import AdEMAMix
@@ -31,6 +33,7 @@ from optim.sign import Signum
 from optim.soap import SOAP
 from optim.sophia import SophiaG
 from optim.adamw_spectral_L1_reg import AdamWSpectralL1Reg
+from optim.numuon import NuMuon
 
 
 def get_args():
@@ -66,8 +69,15 @@ def main(args, parser):
         torch.cuda.set_device(torch.device(args.device))
     # torch.use_deterministic_algorithms(True)  # CUBLAS_WORKSPACE_CONFIG=:4096:8
 
-    exp_name = get_exp_name(args, parser, distributed_backend)
+    exp_name = args.experiment_name if args.experiment_name else get_exp_name(args, parser, distributed_backend)
     exp_dir = Path(args.results_base_folder) / exp_name
+
+    # Set eval_batch_size default before building evaluators
+    if args.eval_batch_size is None:
+        args.eval_batch_size = args.batch_size
+
+    downstream_evaluator = build_evaluators(args)
+
     if distributed_backend.is_master_process() and args.wandb:
         wandb.init(
             project=args.wandb_project,
@@ -79,6 +89,9 @@ def main(args, parser):
         wandb.define_metric("train/*", step_metric="iter")
         wandb.define_metric("val/*", step_metric="iter")
         wandb.define_metric("lr", step_metric="iter")
+        if downstream_evaluator is not None:
+            for metric_glob in downstream_evaluator.wandb_metric_globs():
+                wandb.define_metric(metric_glob, step_metric="iter")
 
     print(f"Starting Experiment: {exp_name}")
     print(f"Experiment Directory: {exp_dir}")
@@ -350,6 +363,28 @@ def main(args, parser):
             weight_decay=args.weight_decay,
             spectral_l1_reg_coef=args.spectral_l1_reg_coef,
         )
+    elif args.opt == "numuon":
+        param_list = (
+            list(model.parameters())
+            if args.distributed_backend is None
+            else list(model.module.parameters())
+        )
+        opt = NuMuon(
+            muon_params=param_list,
+            lr=args.muon_lr_factor,
+            momentum=args.momentum,
+            nesterov=args.nesterov,
+            rank_fraction=args.numuon_rank_fraction,
+            rank_fraction_final=args.numuon_rank_fraction_final,
+            rank_schedule=args.numuon_rank_schedule,
+            total_steps=args.iterations,
+            svd_niter=args.numuon_svd_niter,
+            adamw_params=None,
+            adamw_lr=args.lr,
+            adamw_betas=(args.beta1, args.beta2),
+            adamw_eps=1e-8,
+            adamw_wd=args.weight_decay,
+        )
     else:
         opt = torch.optim.SGD(
             group_specs,
@@ -382,7 +417,7 @@ def main(args, parser):
                     div_factor=1e2,
                     final_div_factor=args.final_div_factor,
                 )
-                if args.opt != "muon"
+                if args.opt not in ("muon", "numuon")
                 else CombinedScheduler(opt, args)
             )
         elif args.scheduler == "cos_inf":
@@ -395,7 +430,7 @@ def main(args, parser):
             )
             scheduler = (
                 torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
-                if args.opt != "muon"
+                if args.opt not in ("muon", "numuon")
                 else CombinedScheduler(opt, args)
             )
         elif args.scheduler == "wsd":
@@ -409,7 +444,7 @@ def main(args, parser):
             )
             scheduler = (
                 torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
-                if args.opt != "muon"
+                if args.opt not in ("muon", "numuon")
                 else CombinedScheduler(opt, args)
             )
         else:
@@ -438,12 +473,29 @@ def main(args, parser):
         exp_dir=exp_dir,
         distributed_backend=distributed_backend,
         cfg=args,
+        downstream_evaluator=downstream_evaluator,
     )
 
     stats["args"] = vars(args)
     if distributed_backend.is_master_process():
         with open(exp_dir / "summary.json", "w") as fs:
             json.dump(stats, fs)
+
+    if args.svd_rank is not None and distributed_backend.is_master_process():
+        raw_model = distributed_backend.get_raw_model(model)
+        print(f"\nCompressing model with SVD rank={args.svd_rank} ...")
+        compressed = compress_model_svd(raw_model, rank=args.svd_rank)
+        stats_c = compression_stats(raw_model, compressed)
+        print(
+            f"  original params : {stats_c['original_params'] / 1e6:.2f}M\n"
+            f"  compressed params: {stats_c['compressed_params'] / 1e6:.2f}M\n"
+            f"  compression ratio: {stats_c['compression_ratio']:.2f}x"
+        )
+        compressed_dir = exp_dir / "compressed" / f"rank_{args.svd_rank}"
+        compressed_dir.mkdir(parents=True, exist_ok=True)
+        torch.save({"model": compressed.state_dict(), "svd_rank": args.svd_rank}, compressed_dir / "main.pt")
+        print(f"  saved to {compressed_dir / 'main.pt'}")
+
     distributed_backend.finalize()
 
 
@@ -496,6 +548,7 @@ def get_exp_name(
         "acc_steps",
         "results_base_folder",
         "run_prefix",
+        "experiment_name",
         "wandb_run_prefix",
         "seed",
         "device",

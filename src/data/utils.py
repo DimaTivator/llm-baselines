@@ -5,6 +5,35 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+
+def get_tokenizer(args, verbose=True):
+    """Load an HuggingFace tokenizer, required for downstream evaluation."""
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as exc:
+        raise ImportError(
+            "Downstream evaluation requires the 'transformers' package. "
+            "Install it before enabling --downstream_eval_enabled."
+        ) from exc
+
+    tokenizer_name = getattr(args, "tokenizer", "gpt2")
+    if tokenizer_name == "mistral":
+        hf_name = "mistralai/Mistral-7B-v0.1"
+    else:
+        hf_name = "gpt2"
+
+    tokenizer = AutoTokenizer.from_pretrained(hf_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    max_length = getattr(args, "sequence_length", 512)
+    tokenizer.model_max_length = max_length
+
+    if verbose:
+        print(f"Loaded tokenizer '{hf_name}' (vocab_size={len(tokenizer)}, max_length={max_length})")
+
+    return tokenizer
+
 from .arxiv import get_arxiv_2000, get_arxiv_full
 from .benchmarks import SUPPORTED_TASK_MAP
 from .c4 import get_c4_data
@@ -47,7 +76,7 @@ def get_dataset(args) -> Dict[str, np.ndarray]:
     if args.dataset == "fineweb":
         return get_fineweb_data(args.datasets_dir)
     if args.dataset == "finewebedu":
-        return get_fineweb_edu_data(args.datasets_dir)
+        return get_fineweb_edu_data(args.datasets_dir, max_files=args.finewebedu_max_files, tokenized_data_dir=args.tokenized_data_dir)
     if args.dataset == "c4":
         return get_c4_data(args.datasets_dir)
     if args.dataset in SUPPORTED_TASK_MAP:
