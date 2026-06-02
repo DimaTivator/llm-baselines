@@ -23,10 +23,10 @@ WARMUP=3925    # 10% of iterations
 
 # ─── SUMO-specific ───────────────────────────────────────────────────────────
 DENSITY=0.25              # rank = density * hidden_size per 2-D param
-UPDATE_GAP=200            # subspace projection update interval (steps)
+UPDATE_GAP=50             # subspace projection update interval (steps)
 SUMO_ALPHA=4.0            # full-space update scale factor
 SUMO_GAMMA=1.1            # norm-growth limiter threshold
-SUMO_LR_ADAM=1e-5         # AdamW backup lr (for 1-D / non-matrix params)
+SUMO_LR_ADAM=1e-4         # AdamW backup lr (for 1-D / non-matrix params)
 SUMO_SCALE=1.0            # back-projection scalar multiplier
 SUMO_PROJ_TYPE=std        # projector type: std | reverse_std | right | left | full
 

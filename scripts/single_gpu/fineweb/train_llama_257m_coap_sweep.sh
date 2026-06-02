@@ -23,7 +23,7 @@ WARMUP=3925    # 10% of iterations
 
 # ─── COAP-specific ───────────────────────────────────────────────────────────
 DENSITY=0.25                  # rank = density * min(p.shape) per 2-D param
-COAP_UPDATE_INTERVAL=50       # cheap projection update every N steps
+COAP_UPDATE_INTERVAL=32       # cheap projection update every N steps
 COAP_REPROJECT_FACTOR=5       # full SVD every update_interval * factor steps
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────

@@ -23,10 +23,8 @@ WARMUP=3925    # 10% of iterations
 
 # ─── BAdam-specific ───────────────────────────────────────────────────────────
 BLOCK_SIZE=1              # number of transformer layers per trainable block
-UPDATE_GAP=100            # steps between block switches; paper recommends min(max(n/(B*D),50),100)
-                          # n=~5M samples, B=128, D=12 → 100 (capped)
-SWITCH_MODE=random        # random | ascending | descending | fixed
-                          # paper GitHub default is random; ascending used for RoBERTa classification
+UPDATE_GAP=50             # steps between block switches
+SWITCH_MODE=descending    # random | ascending | descending | fixed
 BADAM_VERBOSE=1
 
 # ─── Sweep lists ─────────────────────────────────────────────────────────────
@@ -37,7 +35,7 @@ DTYPE_LIST=(bfloat16)
 
 # ─── Sweep ───────────────────────────────────────────────────────────────────
 for DTYPE in "${DTYPE_LIST[@]}"; do
-for LR in "${LR_LIST[@]}"; do   
+for LR in "${LR_LIST[@]}"; do
 for WD in "${WD_LIST[@]}"; do
 for BETA2 in "${BETA2_LIST[@]}"; do
 
