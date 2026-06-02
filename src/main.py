@@ -216,6 +216,20 @@ def main(args):
             init=args.riemannian_init,
         )
 
+    # ── HybridLoRA: add LoRA adapters to target layers *before* DDP ───
+    if args.opt == "hybrid_lora":
+        from optim.memory_efficient.hybrid_lora import apply_hybrid_lora
+        hybrid_lora_rank = args.hybrid_lora_rank if args.hybrid_lora_rank > 0 else int(args.density * args.n_embd)
+        _hybrid_riemannian = args.hybrid_lora_lora_opt in ("riemannian_adamw", "riemannian_sgd")
+        apply_hybrid_lora(
+            model,
+            rank=hybrid_lora_rank,
+            alpha=args.hybrid_lora_alpha,
+            scope=args.hybrid_lora_scope,
+            target_modules=args.hybrid_lora_target_modules,
+            riemannian_lora=_hybrid_riemannian,
+        )
+
     # ── LORO: replace Linear modules with LowRank *before* DDP ────────
     if args.opt in ("loro", "loro_adpt"):
         from optim.memory_efficient.loro.utils import apply_loro
@@ -264,6 +278,13 @@ def main(args):
         optimized_params_cnt = sum(
             p.numel() for g in group_specs for p in g["params"]
         )
+    elif args.opt == "hybrid_lora":
+        # Param groups are built in the optimizer block below (needs both base / lora splits).
+        group_specs = None
+        optimized_params_cnt = sum(
+            p.numel() for p in distributed_backend.get_raw_model(model).parameters()
+            if p.requires_grad
+        )
     else:
         group_specs = distributed_backend.get_raw_model(model).get_parameter_group_specs()
         param_name_mapping = {p_name: p for p_name, p in model.named_parameters()}
@@ -285,7 +306,61 @@ def main(args):
         wandb.log({"parameters": params_cnt, "optimized_parameters": optimized_params_cnt})
 
     # ── Optimiser ─────────────────────────────────────────────────────────
-    if args.opt in ("riemannian_adamw", "riemannian_sgd"):
+    if args.opt == "hybrid_lora":
+        from optim.memory_efficient.hybrid_lora import HybridLoRAOptimizer, get_hybrid_lora_param_groups
+        from optim.memory_efficient.frugal import Lion
+
+        lora_lr = args.lr * args.hybrid_lora_lora_lr_scale
+
+        base_groups, lora_groups = get_hybrid_lora_param_groups(
+            distributed_backend.get_raw_model(model),
+            weight_decay=args.weight_decay,
+            base_lr=args.lr,
+            lora_lr=lora_lr,
+        )
+
+        _BASE_OPT_MAP = {
+            "sgd":   torch.optim.SGD,
+            "lion":  Lion,
+            "adamw": torch.optim.AdamW,
+        }
+        base_cls = _BASE_OPT_MAP[args.hybrid_lora_base_opt]
+
+        if args.hybrid_lora_base_opt == "sgd":
+            base_kwargs = dict(lr=args.lr, weight_decay=args.weight_decay, momentum=0.0)
+        elif args.hybrid_lora_base_opt == "lion":
+            base_kwargs = dict(lr=args.lr, weight_decay=args.weight_decay,
+                               betas=(args.beta1, args.beta2))
+        else:  # adamw
+            base_kwargs = dict(lr=args.lr, weight_decay=args.weight_decay,
+                               betas=(args.beta1, args.beta2), eps=args.eps)
+
+        if args.hybrid_lora_lora_opt in ("riemannian_adamw", "riemannian_sgd"):
+            from optim.memory_efficient.riemannian_lora import RiemannianLora, RiemannianSGD
+            if args.hybrid_lora_lora_opt == "riemannian_sgd":
+                lora_cls = RiemannianSGD
+                lora_kwargs = dict(lr=lora_lr, momentum=args.beta1)
+            else:
+                lora_cls = RiemannianLora
+                lora_kwargs = dict(lr=lora_lr, betas=[args.beta1, args.beta2])
+        else:
+            _LORA_OPT_MAP = {
+                "adamw": torch.optim.AdamW,
+                "adam":  torch.optim.Adam,
+            }
+            lora_cls = _LORA_OPT_MAP[args.hybrid_lora_lora_opt]
+            lora_kwargs = dict(lr=lora_lr, weight_decay=0.0,
+                               betas=(args.beta1, args.beta2), eps=args.eps)
+
+        opt = HybridLoRAOptimizer(
+            base_groups=base_groups,
+            lora_groups=lora_groups,
+            base_opt_cls=base_cls,
+            lora_opt_cls=lora_cls,
+            base_opt_kwargs=base_kwargs,
+            lora_opt_kwargs=lora_kwargs,
+        )
+    elif args.opt in ("riemannian_adamw", "riemannian_sgd"):
         from optim.memory_efficient.riemannian_lora import get_riemannian_param_groups, RiemannianPretrainOptimizer
         riemannian_rank = args.riemannian_rank if args.riemannian_rank > 0 else int(args.density * args.n_embd)
         lora_groups, regular_groups = get_riemannian_param_groups(
