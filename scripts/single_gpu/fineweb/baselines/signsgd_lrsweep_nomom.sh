@@ -7,33 +7,26 @@ EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-"./evals_cache"}
 RESULTS_DIR=${RESULTS_DIR:-"./exps"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain"}
 
-N_LAYER=18
-N_EMBD=1280
-N_HEAD=20
+N_LAYER=12
+N_EMBD=1024
+N_HEAD=8
 SEQ_LEN=1024
 MULTIPLE_OF=256
 
-ITERATIONS=75457
-WARMUP=2000
-WSD_FRACT_DECAY=0.1
-WSD_FINAL_LR_SCALE=0.0
-DECAY_TYPE=cosine
-BATCH_SIZE=64
-ACC_STEPS=2
-WEIGHT_DECAY=1e-4
+ITERATIONS=39250
+WARMUP=1963 # ~= 5%
+BATCH_SIZE=16
+ACC_STEPS=8
 
-LR_LIST=(5e-4 6.25e-4 7.5e-4 8.75e-4) 
+WD=1e-1
+
+# signSGD without momentum (beta1=0.0): update = -lr * sign(grad)
+LR_LIST=(1e-4 5e-4 1e-3 2e-3)
 
 for LR in "${LR_LIST[@]}"; do
-
-    EXP_NAME="500m_muon_lr${LR}_wd${WEIGHT_DECAY}_1xC_1gpu"
-    echo "==============================================================="
-    echo "Starting: ${EXP_NAME}"
-    echo "==============================================================="
-
     torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
         --distributed-backend nccl \
-        --experiment-name "${EXP_NAME}" \
+        --experiment-name "signsgd_nomom_lr_${LR}_wd_${WD}" \
         \
         --dataset fineweb \
         --datasets-dir "${DATASETS_DIR}" \
@@ -49,19 +42,15 @@ for LR in "${LR_LIST[@]}"; do
         --multiple-of ${MULTIPLE_OF} \
         --dtype bfloat16 \
         \
-        --opt muon \
+        --opt sign_sgd \
         --lr ${LR} \
-        --weight-decay ${WEIGHT_DECAY} \
-        --beta1 0.9 \
-        --beta2 0.99 \
+        --weight-decay ${WD} \
+        --beta1 0.0 \
         --grad-clip 1.0 \
         \
-        --scheduler wsd \
+        --scheduler cos_warmup_zero \
         --warmup-steps ${WARMUP} \
         --iterations ${ITERATIONS} \
-        --wsd-fract-decay ${WSD_FRACT_DECAY} \
-        --wsd-final-lr-scale ${WSD_FINAL_LR_SCALE} \
-        --decay-type ${DECAY_TYPE} \
         \
         --batch-size ${BATCH_SIZE} \
         --acc-steps ${ACC_STEPS} \
@@ -80,7 +69,5 @@ for LR in "${LR_LIST[@]}"; do
         --results-base-folder "${RESULTS_DIR}" \
         --wandb \
         --wandb-project "${WANDB_PROJECT}" \
-        --wandb-group 1xChinchilla_1gpu \
-        --wandb-tags sweep bf16 0.5B 1gpu muon
-
+        --wandb-tags baseline bf16 signsgd nomomentum lrsweep
 done

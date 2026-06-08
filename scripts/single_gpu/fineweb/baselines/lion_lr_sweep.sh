@@ -7,26 +7,26 @@ EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-"./evals_cache"}
 RESULTS_DIR=${RESULTS_DIR:-"./exps"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain"}
 
-N_LAYER=18
-N_EMBD=1280
-N_HEAD=20
+N_LAYER=12
+N_EMBD=1024
+N_HEAD=8
 SEQ_LEN=1024
 MULTIPLE_OF=256
 
-ITERATIONS=75457
-WARMUP=2000
+ITERATIONS=39250
+WARMUP=1963
 WSD_FRACT_DECAY=0.1
 WSD_FINAL_LR_SCALE=0.0
 DECAY_TYPE=cosine
-BATCH_SIZE=64
-ACC_STEPS=2
-WEIGHT_DECAY=1e-4
+BATCH_SIZE=16
+ACC_STEPS=8
+WEIGHT_DECAY=1e-1
 
-LR_LIST=(5e-4 6.25e-4 7.5e-4 8.75e-4) 
+LR_LIST=(1e-4 5e-4 1e-3 2e-3)
 
 for LR in "${LR_LIST[@]}"; do
 
-    EXP_NAME="500m_muon_lr${LR}_wd${WEIGHT_DECAY}_1xC_1gpu"
+    EXP_NAME="257m_lion_lr${LR}_wd${WEIGHT_DECAY}_1xC_1gpu"
     echo "==============================================================="
     echo "Starting: ${EXP_NAME}"
     echo "==============================================================="
@@ -49,7 +49,7 @@ for LR in "${LR_LIST[@]}"; do
         --multiple-of ${MULTIPLE_OF} \
         --dtype bfloat16 \
         \
-        --opt muon \
+        --opt lion \
         --lr ${LR} \
         --weight-decay ${WEIGHT_DECAY} \
         --beta1 0.9 \
@@ -81,6 +81,6 @@ for LR in "${LR_LIST[@]}"; do
         --wandb \
         --wandb-project "${WANDB_PROJECT}" \
         --wandb-group 1xChinchilla_1gpu \
-        --wandb-tags sweep bf16 0.5B 1gpu muon
+        --wandb-tags sweep bf16 257M 1gpu lion
 
 done

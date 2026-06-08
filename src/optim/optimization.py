@@ -1,5 +1,5 @@
 import torch
-from .memory_efficient.frugal import AdamW, GaloreAdamW, CoordAdamW, BlockAdamW, SGD, GaloreSGD, CoordSGD, BlockSGD, Lion, GaloreLion, CoordLion, BlockLion, Adalayer, GaloreAdalayer, CoordAdalayer, BlockAdalayer
+from .memory_efficient.frugal import AdamW, GaloreAdamW, CoordAdamW, BlockAdamW, SGD, GaloreSGD, CoordSGD, BlockSGD, Lion, GaloreLion, CoordLion, BlockLion, Adalayer, GaloreAdalayer, CoordAdalayer, BlockAdalayer, CoordMuon, GaloreMuon, BlockMuon
 from .memory_efficient.fira import FiraAdamW
 from .memory_efficient.galore import GaLoreAdafactor, AdaMeM
 from .memory_efficient.apollo import APOLLOAdamW
@@ -349,6 +349,58 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             coord_choice=args.coord_choice,
             # adam specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)
+    elif optimizer_name == "coord_muon":
+        optimizer = CoordMuon(
+            param_groups,
+            proj_params_lr_scale=args.proj_params_lr_scale,
+            update_gap=args.update_gap,
+            density=args.density,
+            reset_statistics=args.reset_statistics,
+            inactive_lr_scale=args.inactive_lr_scale,
+            coord_choice=args.coord_choice,
+            lr=args.lr,
+            momentum=args.momentum,
+            nesterov=args.nesterov,
+            ns_steps=args.muon_ns_steps,
+            adjust_lr=args.frugal_muon_adjust_lr,
+            epsilon=args.eps,
+            weight_decay=args.weight_decay,
+        )
+    elif optimizer_name == "galore_muon":
+        optimizer = GaloreMuon(
+            param_groups,
+            proj_params_lr_scale=args.proj_params_lr_scale,
+            update_gap=args.update_gap,
+            density=args.density,
+            reset_statistics=args.reset_statistics,
+            inactive_lr_scale=args.inactive_lr_scale,
+            proj_side=args.proj_side,
+            proj_type=args.proj_type,
+            lr=args.lr,
+            momentum=args.momentum,
+            nesterov=args.nesterov,
+            ns_steps=args.muon_ns_steps,
+            adjust_lr=args.frugal_muon_adjust_lr,
+            epsilon=args.eps,
+            weight_decay=args.weight_decay,
+        )
+    elif optimizer_name == "block_muon":
+        optimizer = BlockMuon(
+            param_groups,
+            proj_params_lr_scale=args.proj_params_lr_scale,
+            update_gap=args.update_gap,
+            density=args.density,
+            reset_statistics=args.reset_statistics,
+            inactive_lr_scale=args.inactive_lr_scale,
+            block_order=args.block_order,
+            lr=args.lr,
+            momentum=args.momentum,
+            nesterov=args.nesterov,
+            ns_steps=args.muon_ns_steps,
+            adjust_lr=args.frugal_muon_adjust_lr,
+            epsilon=args.eps,
+            weight_decay=args.weight_decay,
+        )
     elif optimizer_name == "block_adamw":
         optimizer = BlockAdamW(
             param_groups,

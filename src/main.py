@@ -307,7 +307,7 @@ def main(args):
 
     # ── Optimiser ─────────────────────────────────────────────────────────
     if args.opt == "hybrid_lora":
-        from optim.memory_efficient.hybrid_lora import HybridLoRAOptimizer, get_hybrid_lora_param_groups
+        from optim.memory_efficient.hybrid_lora import HybridLoRAOptimizer, get_hybrid_lora_param_groups, SignSGD
         from optim.memory_efficient.frugal import Lion
 
         lora_lr = args.lr * args.hybrid_lora_lora_lr_scale
@@ -320,13 +320,16 @@ def main(args):
         )
 
         _BASE_OPT_MAP = {
-            "sgd":   torch.optim.SGD,
-            "lion":  Lion,
-            "adamw": torch.optim.AdamW,
+            "sgd":      torch.optim.SGD,
+            "sign_sgd": SignSGD,
+            "lion":     Lion,
+            "adamw":    torch.optim.AdamW,
         }
         base_cls = _BASE_OPT_MAP[args.hybrid_lora_base_opt]
 
-        if args.hybrid_lora_base_opt == "sgd":
+        if args.hybrid_lora_base_opt == "sign_sgd":
+            base_kwargs = dict(lr=args.lr, weight_decay=args.weight_decay, momentum=args.beta1)
+        elif args.hybrid_lora_base_opt == "sgd":
             base_kwargs = dict(lr=args.lr, weight_decay=args.weight_decay, momentum=0.0)
         elif args.hybrid_lora_base_opt == "lion":
             base_kwargs = dict(lr=args.lr, weight_decay=args.weight_decay,
@@ -494,6 +497,9 @@ def main(args):
         )
     elif args.opt == "sgd":
         opt = torch.optim.SGD(group_specs, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    elif args.opt == "sign_sgd":
+        from optim.memory_efficient.hybrid_lora import SignSGD
+        opt = SignSGD(group_specs, lr=args.lr, momentum=args.beta1, weight_decay=args.weight_decay)
     else:
         opt = get_optimizer(group_specs, args, model=model, qargs=args.qargs)  # Passes qargs, currently not implemented
 

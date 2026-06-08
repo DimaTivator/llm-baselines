@@ -124,9 +124,10 @@ def parse_args(base_parser, args, namespace):
         default="adamw",
         choices=[
             "adamw", "sgd", "SFAdamW", "coat_adamw", "triton_coat_adamw",
-            "galore_adamw", "coord_adamw", "block_adamw", "adalayer", "block_adalayer",  # Frugal/Coord/Block
+            "galore_adamw", "coord_adamw", "block_adamw", "adalayer", "block_adalayer",  # Frugal/Coord/Block AdamW
+            "coord_muon", "galore_muon", "block_muon",  # Frugal Muon variants
             "lion", "galore_lion", "coord_lion", "block_lion",  # Lion variants
-            "sgd", "galore_sgd", "coord_sgd", "block_sgd",  # SGD variants
+            "sgd", "galore_sgd", "coord_sgd", "block_sgd", "sign_sgd",  # SGD variants
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
@@ -339,6 +340,12 @@ def parse_args(base_parser, args, namespace):
 
     # Coord parameters
     parser.add_argument("--coord_choice", type=str, default="columns", choices=["columns", "rows", "randk"])
+
+    # Frugal-Muon parameters
+    parser.add_argument("--frugal_muon_adjust_lr", default=True, action="store_true",
+        help="CoordMuon/GaloreMuon/BlockMuon: scale the NS update by sqrt(max(m,n)) "
+             "to keep the effective LR comparable across matrix shapes (standard Muon behaviour).")
+    parser.add_argument("--no_frugal_muon_adjust_lr", dest="frugal_muon_adjust_lr", action="store_false")
 
     # Block parameters
     parser.add_argument("--block_order", type=str, default="random", choices=['random', 'ascending', 'descending', 'mirror'])
@@ -554,7 +561,7 @@ def parse_args(base_parser, args, namespace):
              "module name (e.g. --hybrid_lora_target_modules q_proj k_proj v_proj). "
              "When omitted, all Linear layers in --hybrid_lora_scope are targeted.")
     parser.add_argument("--hybrid_lora_base_opt", type=str, default="sgd",
-        choices=["sgd", "lion", "adamw"],
+        choices=["sgd", "sign_sgd", "lion", "adamw"],
         help="Stateless optimizer for base model weights.")
     parser.add_argument("--hybrid_lora_lora_opt", type=str, default="adamw",
         choices=["adamw", "adam", "riemannian_adamw", "riemannian_sgd"],

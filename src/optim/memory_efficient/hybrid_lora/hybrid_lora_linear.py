@@ -49,13 +49,12 @@ class HybridLoRALinear(nn.Module):
         else:
             self.register_parameter("bias", None)
 
-        self.lora_A = nn.Parameter(
-            torch.randn(rank, linear.in_features, device=device, dtype=dtype)
-            / math.sqrt(rank)
-        )
-        self.lora_B = nn.Parameter(
-            torch.zeros(linear.out_features, rank, device=device, dtype=dtype)
-        )
+        lora_A = torch.empty(rank, linear.in_features, device=device, dtype=dtype)
+        lora_B = torch.empty(linear.out_features, rank, device=device, dtype=dtype)
+        nn.init.xavier_uniform_(lora_A)
+        nn.init.xavier_uniform_(lora_B)
+        self.lora_A = nn.Parameter(lora_A)
+        self.lora_B = nn.Parameter(lora_B)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         base = F.linear(x, self.weight, self.bias)
