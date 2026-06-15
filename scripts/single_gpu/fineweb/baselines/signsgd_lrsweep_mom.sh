@@ -18,8 +18,8 @@ WARMUP=1963
 WSD_FRACT_DECAY=0.1
 WSD_FINAL_LR_SCALE=0.0
 DECAY_TYPE=cosine
-BATCH_SIZE=16
-ACC_STEPS=8
+BATCH_SIZE=64
+ACC_STEPS=2
 WEIGHT_DECAY=1e-1
 
 WD=1e-1
@@ -27,7 +27,7 @@ MOMENTUM=0.9
 
 # signSGD with momentum (beta1=MOMENTUM):
 #   buf = momentum*buf + grad ; update = -lr * sign(buf)
-LR_LIST=(1e-4 5e-4 1e-3 2e-3)
+LR_LIST=(1e-3 2e-3)
 
 for LR in "${LR_LIST[@]}"; do
     torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \

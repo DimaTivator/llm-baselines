@@ -10,6 +10,8 @@ import wandb
 
 from tqdm.auto import trange
 
+from optim.multi_optimizer import MultiOptimizer, MultiScheduler
+
 
 def get_batch(datareader, device="cpu"):
     x, y = datareader.sample_batch()
@@ -146,6 +148,13 @@ def cos_warmup_zero_schedule(n_iterations, n_warmup):
 
 def build_scheduler(opt, args, total_steps=None):
     total_steps = args.iterations if total_steps is None else total_steps
+
+    if isinstance(opt, MultiOptimizer):
+        proj_sched = build_scheduler(opt.proj_opt, args, total_steps)
+        non_proj_sched = build_scheduler(opt.non_proj_opt, args, total_steps)
+        if proj_sched is None:
+            return None
+        return MultiScheduler(proj_sched, non_proj_sched)
 
     if args.scheduler == "none":
         return None

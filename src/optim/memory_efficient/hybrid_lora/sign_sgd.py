@@ -7,6 +7,12 @@ class SignSGD(Optimizer):
 
     update = -lr * sign(grad)                        # momentum=0
     update = -lr * sign(buf); buf = m*buf + grad     # momentum > 0
+
+    Weight decay is applied in a decoupled (AdamW-style) manner:
+        p = p * (1 - lr * wd) - lr * sign(...)
+    This ensures the decay force is proportional to the weight magnitude and
+    is not crushed by the sign operation (which is what happens with L2 / adding
+    wd*p to the gradient before taking sign).
     """
 
     def __init__(self, params, lr=1e-3, momentum=0.0, weight_decay=0.0):
@@ -35,9 +41,6 @@ class SignSGD(Optimizer):
                     continue
                 grad = p.grad
 
-                if wd != 0.0:
-                    grad = grad.add(p, alpha=wd)
-
                 if momentum != 0.0:
                     state = self.state[p]
                     if "momentum_buffer" not in state:
@@ -45,6 +48,9 @@ class SignSGD(Optimizer):
                     else:
                         state["momentum_buffer"].mul_(momentum).add_(grad)
                     grad = state["momentum_buffer"]
+
+                if wd != 0.0:
+                    p.mul_(1.0 - lr * wd)
 
                 p.add_(grad.sign(), alpha=-lr)
 

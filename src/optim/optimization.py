@@ -15,12 +15,109 @@ from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
 from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN, DistributedShampoo
+from .multi_optimizer import MultiOptimizer
+
+
+def _split_proj_groups(param_groups):
+    """Split param_groups into (proj_groups, non_proj_groups) by is_proj_params flag."""
+    proj_groups = [g for g in param_groups if g.get("is_proj_params", False)]
+    non_proj_groups = [g for g in param_groups if not g.get("is_proj_params", False)]
+    return proj_groups, non_proj_groups
+
+
+def _build_non_proj_optimizer(non_proj_groups, args):
+    """Build an optimizer for non-projection param groups based on args.non_proj_opt."""
+    non_proj_opt_name = getattr(args, "non_proj_opt", "adamw")
+    lr = getattr(args, "non_proj_lr", None) or args.lr
+    wd = args.weight_decay
+
+    if non_proj_opt_name == "adamw":
+        return torch.optim.AdamW(
+            non_proj_groups,
+            lr=lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+            weight_decay=wd,
+        )
+    elif non_proj_opt_name == "muon":
+        # Use the same frugal MuonBase (CoordMuon) but for non-proj params only.
+        # For 1D params (norms, biases) Muon falls back to sign-SGD inside _stateless_muon.
+        # We use the simplest frugal Muon variant (CoordMuon with density=1.0 so all
+        # columns are active, effectively a full Muon update).
+        return CoordMuon(
+            non_proj_groups,
+            proj_params_lr_scale=1.0,
+            update_gap=getattr(args, "update_gap", 200),
+            density=1.0,
+            reset_statistics=getattr(args, "reset_statistics", True),
+            inactive_lr_scale=1.0,
+            coord_choice=getattr(args, "coord_choice", "columns"),
+            lr=lr,
+            momentum=getattr(args, "momentum", 0.95),
+            nesterov=getattr(args, "nesterov", True),
+            ns_steps=getattr(args, "muon_ns_steps", 5),
+            adjust_lr=getattr(args, "frugal_muon_adjust_lr", True),
+            epsilon=args.eps,
+            weight_decay=wd,
+        )
+    elif non_proj_opt_name == "sign_sgd":
+        from .memory_efficient.hybrid_lora import SignSGD
+        return SignSGD(
+            non_proj_groups,
+            lr=lr,
+            momentum=getattr(args, "beta1", 0.9),
+            weight_decay=wd,
+        )
+    elif non_proj_opt_name == "sgd":
+        return torch.optim.SGD(
+            non_proj_groups,
+            lr=lr,
+            momentum=getattr(args, "momentum", 0.0),
+            weight_decay=wd,
+        )
+    else:
+        raise ValueError(f"Unknown --non_proj_opt value: {non_proj_opt_name!r}. "
+                         "Supported: adamw, muon, sign_sgd, sgd.")
+
+
+def _maybe_wrap_non_proj(proj_optimizer, param_groups, args):
+    """If --non_proj_opt != adamw, build a MultiOptimizer for proj + non_proj groups.
+
+    The frugal optimizer passed as *proj_optimizer* must have been constructed
+    using only the proj_groups (is_proj_params=True).  The non_proj_groups are
+    extracted from the original param_groups list and passed to a separate
+    optimizer built from --non_proj_opt.
+
+    When --non_proj_opt == 'adamw' (default) the function returns proj_optimizer
+    unchanged so that the existing code path is not affected.
+    """
+    non_proj_opt_name = getattr(args, "non_proj_opt", "adamw")
+    if non_proj_opt_name == "adamw":
+        return proj_optimizer
+
+    _, non_proj_groups = _split_proj_groups(param_groups)
+    if not non_proj_groups:
+        # Nothing to wrap — all params are proj params.
+        return proj_optimizer
+
+    non_proj_opt = _build_non_proj_optimizer(non_proj_groups, args)
+    return MultiOptimizer(proj_optimizer, non_proj_opt)
 
 
 def get_optimizer(param_groups, args, model=None, qargs=None):
-    
+
     optimizer_name = args.opt.lower()
     assert optimizer_name != "badam" or model is not None, "BAdam requires model for the initialization."
+
+    # For FRUGAL optimizers: when --non_proj_opt != adamw the frugal optimizer
+    # should only see proj_groups; non_proj_groups get a separate optimizer via
+    # _maybe_wrap_non_proj().  When --non_proj_opt == adamw (default) frugal_groups
+    # equals param_groups and the code path is identical to before.
+    _non_proj_opt = getattr(args, "non_proj_opt", "adamw")
+    if _non_proj_opt != "adamw":
+        frugal_groups, _ = _split_proj_groups(param_groups)
+    else:
+        frugal_groups = param_groups
     if optimizer_name == "adam":
         optimizer = torch.optim.Adam(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)#, foreach=False, fused=False)
     elif optimizer_name == "adamw":
@@ -324,7 +421,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
     elif optimizer_name == "galore_adamw":
         # redefine way to call galore_adamw
         optimizer = GaloreAdamW(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -336,9 +433,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             proj_type=args.proj_type,
             # adam specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "coord_adamw":
         optimizer = CoordAdamW(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -349,9 +447,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             coord_choice=args.coord_choice,
             # adam specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "coord_muon":
         optimizer = CoordMuon(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap=args.update_gap,
             density=args.density,
@@ -366,9 +465,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             epsilon=args.eps,
             weight_decay=args.weight_decay,
         )
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "galore_muon":
         optimizer = GaloreMuon(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap=args.update_gap,
             density=args.density,
@@ -384,9 +484,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             epsilon=args.eps,
             weight_decay=args.weight_decay,
         )
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "block_muon":
         optimizer = BlockMuon(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap=args.update_gap,
             density=args.density,
@@ -401,9 +502,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             epsilon=args.eps,
             weight_decay=args.weight_decay,
         )
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "block_adamw":
         optimizer = BlockAdamW(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -414,6 +516,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             block_order=args.block_order,
             # adam specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "adalayer":
         for group in param_groups:
             group["sqrt_numel"] = args.sqrt_numel
@@ -422,7 +525,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
         for group in param_groups:
             group["sqrt_numel"] = args.sqrt_numel
         optimizer = BlockAdalayer(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -433,11 +536,12 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             block_order=args.block_order,
             # adalayer specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay, eps=args.eps)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "lion":
         optimizer = Lion(param_groups, betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay)
     elif optimizer_name == "galore_lion":
         optimizer = GaloreLion(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -449,9 +553,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             proj_type=args.proj_type,
             # lion specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "coord_lion":
         optimizer = CoordLion(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -462,9 +567,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             coord_choice=args.coord_choice,
             # lion specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "block_lion":
         optimizer = BlockLion(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -475,12 +581,13 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             block_order=args.block_order,
             # lion specific
             betas=(args.beta1, args.beta2), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     # implement sgd
     elif optimizer_name == "sgd":
         optimizer = SGD(param_groups, lr=args.lr, momentum=args.beta1, dampening=args.dampening, weight_decay=args.weight_decay, nesterov=args.nesterov, sign_update=args.sgd_sign_update)
     elif optimizer_name == "galore_sgd":
         optimizer = GaloreSGD(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -492,9 +599,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             proj_type=args.proj_type,
             # sgd specific
             lr=args.lr, momentum=args.beta1, dampening=args.dampening, weight_decay=args.weight_decay, nesterov=args.nesterov, sign_update=args.sgd_sign_update)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "coord_sgd":
         optimizer = CoordSGD(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -505,9 +613,10 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             coord_choice=args.coord_choice,
             # sgd specific
             lr=args.lr, momentum=args.beta1, dampening=args.dampening, weight_decay=args.weight_decay, nesterov=args.nesterov, sign_update=args.sgd_sign_update)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "block_sgd":
         optimizer = BlockSGD(
-            param_groups,
+            frugal_groups,
             proj_params_lr_scale=args.proj_params_lr_scale,
             update_gap = args.update_gap,
             density=args.density,
@@ -518,6 +627,7 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             block_order=args.block_order,
             # lion specific
             lr=args.lr, momentum=args.beta1, dampening=args.dampening, weight_decay=args.weight_decay, nesterov=args.nesterov, sign_update=args.sgd_sign_update)
+        optimizer = _maybe_wrap_non_proj(optimizer, param_groups, args)
     elif optimizer_name == "lora":
         # Resolve base optimizer class
         lora_base_map = {

@@ -350,6 +350,29 @@ def parse_args(base_parser, args, namespace):
     # Block parameters
     parser.add_argument("--block_order", type=str, default="random", choices=['random', 'ascending', 'descending', 'mirror'])
 
+    # Non-projection param optimizer (FRUGAL optimizers only)
+    parser.add_argument(
+        "--non_proj_opt",
+        type=str,
+        default="adamw",
+        choices=["adamw", "muon", "sign_sgd", "sgd"],
+        help=(
+            "Optimizer for non-projection params (embeddings, layer norms, lm_head) "
+            "in FRUGAL optimizers (coord_muon, galore_muon, block_muon, coord_adamw, "
+            "galore_adamw, block_adamw, and similar).  Default: adamw (existing behaviour). "
+            "When set to something other than adamw, a MultiOptimizer wrapper is used so "
+            "that proj and non-proj params are trained by separate optimizers."
+        ),
+    )
+    parser.add_argument(
+        "--non_proj_lr",
+        type=float,
+        default=None,
+        help=(
+            "Learning rate for --non_proj_opt.  Defaults to --lr when not set."
+        ),
+    )
+
     # APOLLO parameters
     parser.add_argument("--apollo_proj", type=str, default="random")  # "random" or "svd"
     parser.add_argument("--apollo_scale_type", type=str, default="tensor")  # "tensor" or "channel"

@@ -14,22 +14,33 @@ SEQ_LEN=1024
 MULTIPLE_OF=256
 
 ITERATIONS=39250
-WARMUP=1963 # ~= 5%
+WARMUP=1963
 WSD_FRACT_DECAY=0.1
 WSD_FINAL_LR_SCALE=0.0
 DECAY_TYPE=cosine
-BATCH_SIZE=16
-ACC_STEPS=8
+BATCH_SIZE=64
+ACC_STEPS=2
+WEIGHT_DECAY=0.1
 
-WD=1e-1
+# ─── Frugal-Muon specific ────────────────────────────────────────────────────
+DENSITY=0.25
+UPDATE_GAP=50
+COORD_CHOICE="columns"
+MOMENTUM=0.95
+NS_STEPS=5
 
-# signSGD without momentum (beta1=0.0): update = -lr * sign(grad)
-LR_LIST=(1e-4 5e-4 1e-3 2e-3)
+LR_LIST=(1e-3)
 
 for LR in "${LR_LIST[@]}"; do
+
+    EXP_NAME="llama257M_muon_muon_lr${LR}_fineweb"
+    echo "==============================================================="
+    echo "Starting: ${EXP_NAME}"
+    echo "==============================================================="
+
     torchrun --standalone --nproc_per_node="${NGPUS}" src/main.py \
         --distributed-backend nccl \
-        --experiment-name "signsgd_nomom_lr_${LR}_wd_${WD}" \
+        --experiment-name "${EXP_NAME}" \
         \
         --dataset fineweb \
         --datasets-dir "${DATASETS_DIR}" \
@@ -45,11 +56,18 @@ for LR in "${LR_LIST[@]}"; do
         --multiple-of ${MULTIPLE_OF} \
         --dtype bfloat16 \
         \
-        --opt sign_sgd \
+        --opt coord_muon \
+        --non_proj_opt muon \
         --lr ${LR} \
-        --weight-decay ${WD} \
-        --beta1 0.0 \
+        --weight-decay ${WEIGHT_DECAY} \
+        --momentum ${MOMENTUM} \
+        --nesterov \
+        --muon_ns_steps ${NS_STEPS} \
         --grad-clip 1.0 \
+        \
+        --density ${DENSITY} \
+        --update_gap ${UPDATE_GAP} \
+        --coord_choice ${COORD_CHOICE} \
         \
         --scheduler wsd \
         --warmup-steps ${WARMUP} \
@@ -74,6 +92,6 @@ for LR in "${LR_LIST[@]}"; do
         \
         --results-base-folder "${RESULTS_DIR}" \
         --wandb \
-        --wandb-project "${WANDB_PROJECT}" \
-        --wandb-tags baseline bf16 signsgd nomomentum lrsweep
+        --wandb-project "${WANDB_PROJECT}"
+
 done
