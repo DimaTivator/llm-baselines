@@ -12,6 +12,12 @@ if [ "${MLSUB_CAPTURE_LOG:-0}" = "1" ] && [ "${MLSUB_CAPTURE_ACTIVE:-0}" != "1" 
     exit 0
 fi
 
+if [ "${INSTALL_MLSUB_DEPS:-0}" = "1" ]; then
+    export PYTHONUSERBASE=${PYTHONUSERBASE:-"/home/jovyan/.local"}
+    export PATH="$PYTHONUSERBASE/bin:$PATH"
+    python -m pip install --user -q -r requirements-mlsub.txt || exit 1
+fi
+
 DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 TOKENIZED_DATA_DIR=${TOKENIZED_DATA_DIR:-"${HOME}/tokenized_data"}
 RESULTS_BASE_FOLDER=${RESULTS_BASE_FOLDER:-"./exps/cf_bruteforce_124M"}

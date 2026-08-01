@@ -1,0 +1,7 @@
+tiktoken
+tqdm
+transformers
+wandb
+datasets
+zstandard
+numpy==1.22.4
