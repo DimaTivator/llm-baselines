@@ -2,7 +2,8 @@
 if [ "${MLSUB_CAPTURE_LOG:-0}" = "1" ] && [ "${MLSUB_CAPTURE_ACTIVE:-0}" != "1" ]; then
     LOG_DIR=${MLSUB_LOG_DIR:-"/home/jovyan/logs"}
     mkdir -p "$LOG_DIR"
-    LOG_FILE="$LOG_DIR/llama500m_spectral_l1_$(date +%F_%H%M%S).log"
+    MLSUB_PROCESS_RANK=${OMPI_COMM_WORLD_RANK:-0}
+    LOG_FILE="$LOG_DIR/llama500m_spectral_l1_rank${MLSUB_PROCESS_RANK}_$(date +%F_%H%M%S).log"
     MLSUB_CAPTURE_ACTIVE=1 bash "$0" "$@" > "$LOG_FILE" 2>&1
     TRAIN_EXIT=$?
     echo "TRAIN_EXIT=$TRAIN_EXIT"
@@ -10,6 +11,17 @@ if [ "${MLSUB_CAPTURE_LOG:-0}" = "1" ] && [ "${MLSUB_CAPTURE_ACTIVE:-0}" != "1" 
     echo "=== last 100 lines ==="
     tail -100 "$LOG_FILE"
     exit "$TRAIN_EXIT"
+fi
+
+DISTRIBUTED_ARGS=()
+if [ "${OMPI_COMM_WORLD_SIZE:-1}" -gt 1 ]; then
+    export RANK=${RANK:-"${OMPI_COMM_WORLD_RANK}"}
+    export WORLD_SIZE=${WORLD_SIZE:-"${OMPI_COMM_WORLD_SIZE}"}
+    export LOCAL_RANK=${LOCAL_RANK:-"${OMPI_COMM_WORLD_LOCAL_RANK:-0}"}
+    export MASTER_ADDR=${MASTER_ADDR:-"mpimaster-0"}
+    export MASTER_PORT=${MASTER_PORT:-29500}
+    DISTRIBUTED_ARGS+=(--distributed_backend nccl)
+    echo "DDP rank=${RANK}/${WORLD_SIZE} local_rank=${LOCAL_RANK} master=${MASTER_ADDR}:${MASTER_PORT}"
 fi
 
 if [ "${INSTALL_MLSUB_DEPS:-0}" = "1" ]; then
@@ -127,5 +139,6 @@ for SPECTRAL_L1_COEF_START in "${SPECTRAL_L1_COEF_VALUES[@]}"; do
         --downstream_task_group basic_v2 \
         --hf_checkpoint_repo "${HF_CHECKPOINT_REPO}" \
         --hf_checkpoint_path "${HF_CHECKPOINT_PATH}" \
+        "${DISTRIBUTED_ARGS[@]}" \
         "${EXTRA_ARGS[@]}" || exit 1
 done
