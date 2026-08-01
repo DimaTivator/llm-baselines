@@ -22,6 +22,14 @@ DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 TOKENIZED_DATA_DIR=${TOKENIZED_DATA_DIR:-"${HOME}/tokenized_data"}
 RESULTS_BASE_FOLDER=${RESULTS_BASE_FOLDER:-"./exps/cf_bruteforce_124M"}
 DEVICE=${DEVICE:-"cuda:0"}
+
+if [ "${PREPARE_FINEWEBEDU_H200:-0}" = "1" ]; then
+    FINEWEBEDU_H200_ROOT=${FINEWEBEDU_H200_ROOT:-"/home/jovyan/finewebedu_h200"}
+    python ./src/data/prepare_finewebedu_h200.py --root "$FINEWEBEDU_H200_ROOT" || exit 1
+    DATASETS_DIR="$FINEWEBEDU_H200_ROOT/sample/100BT"
+    TOKENIZED_DATA_DIR="$FINEWEBEDU_H200_ROOT/tokenized"
+fi
+
 if [[ "$DEVICE" == cuda* ]]; then
     python -c 'import torch; print(f"GPU: {torch.cuda.get_device_name(0)}")'
 fi
