@@ -22,8 +22,15 @@ DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 TOKENIZED_DATA_DIR=${TOKENIZED_DATA_DIR:-"${HOME}/tokenized_data"}
 RESULTS_BASE_FOLDER=${RESULTS_BASE_FOLDER:-"./exps/cf_bruteforce_124M"}
 DEVICE=${DEVICE:-"cuda:0"}
+DATASET=${DATASET:-"finewebedu"}
 
-if [ "${PREPARE_FINEWEBEDU_H200:-0}" = "1" ]; then
+if [ -n "${MLSUB_STUDENT:-}" ] && [ "$DATASET" = "finewebedu" ]; then
+    PREPARE_FINEWEBEDU_H200=${PREPARE_FINEWEBEDU_H200:-1}
+else
+    PREPARE_FINEWEBEDU_H200=${PREPARE_FINEWEBEDU_H200:-0}
+fi
+
+if [ "$PREPARE_FINEWEBEDU_H200" = "1" ]; then
     FINEWEBEDU_H200_ROOT=${FINEWEBEDU_H200_ROOT:-"/home/jovyan/finewebedu_h200"}
     python ./src/data/prepare_finewebedu_h200.py --root "$FINEWEBEDU_H200_ROOT" || exit 1
     DATASETS_DIR="$FINEWEBEDU_H200_ROOT/sample/100BT"
@@ -41,7 +48,6 @@ N_EMBD=${N_EMBD:-1024}
 N_HEAD=${N_HEAD:-16}
 N_LAYER=${N_LAYER:-16}
 WD=${WD:-1e-1}
-DATASET=${DATASET:-"finewebedu"}
 ITERATIONS=${ITERATIONS:-39000}
 BATCH_SIZE=${BATCH_SIZE:-32}
 SEQUENCE_LENGTH=${SEQUENCE_LENGTH:-1024}
