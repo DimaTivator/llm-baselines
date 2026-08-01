@@ -49,11 +49,12 @@ N_HEAD=${N_HEAD:-20}
 N_LAYER=${N_LAYER:-22}
 WD=${WD:-1e-1}
 ITERATIONS=${ITERATIONS:-39000}
-BATCH_SIZE=${BATCH_SIZE:-32}
+BATCH_SIZE=${BATCH_SIZE:-16}
 SEQUENCE_LENGTH=${SEQUENCE_LENGTH:-1024}
-ACC_STEPS=${ACC_STEPS:-4}
+ACC_STEPS=${ACC_STEPS:-8}
 WARMUP_STEPS=${WARMUP_STEPS:-2000}
 EVAL_BATCHES=${EVAL_BATCHES:-64}
+EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-32}
 EVAL_INTERVAL=${EVAL_INTERVAL:-281}
 LOG_INTERVAL=${LOG_INTERVAL:-4}
 FINEWEBEDU_MAX_FILES=${FINEWEBEDU_MAX_FILES:-5}
@@ -114,6 +115,7 @@ for SPECTRAL_L1_COEF_START in "${SPECTRAL_L1_COEF_VALUES[@]}"; do
         --dropout 0 \
         --beta1 0.9 --beta2 0.95 \
         --eval_batches "${EVAL_BATCHES}" \
+        --eval_batch_size "${EVAL_BATCH_SIZE}" \
         --eval_interval "${EVAL_INTERVAL}" \
         --latest_ckpt_interval 0 \
         --permanent_ckpt_interval 0 \
