@@ -14,15 +14,85 @@ import os
 import torch
 import torch.distributed as dist
 
+from optim.muon import zeropower_via_newtonschulz5
 
-def _numuon_svd_update(G, k, niter=2):
+_NS_STEPS = 5  # default Newton-Schulz iterations (matches Muon default)
+
+
+def _block_krylov_svd(G, k, L=2, B0=None):
     """
-    Compute top-k singular direction update U_k @ V_k^T via randomized SVD.
+    Algorithm 3 from the nuMuon paper (Musco & Musco 2015).
+    Builds a Krylov subspace of dimension b*(L+1) where b=k, then extracts
+    top-k singular triplets via a small SVD of the projected matrix.
+
+    Args:
+        G:  (m, n) float32 gradient matrix.
+        k:  target rank.
+        L:  number of Krylov iterations.
+        B0: optional warm-start right block (n, k); from previous step's V_k.
+
+    Returns:
+        U_k (m, k), S_k (k,), V_k (n, k)
+    """
+    _, n = G.shape
+    b = k  # block size = target rank
+
+    # Run Krylov iterations in bfloat16 (fast matmuls); final SVD in float32.
+    Gbf = G.bfloat16()
+
+    # --- Initialize B_0 ---
+    if B0 is not None and B0.shape == (n, b):
+        B = B0.bfloat16()
+    else:
+        B = torch.randn(n, b, device=G.device, dtype=torch.bfloat16)
+    B, _ = torch.linalg.qr(B)  # (n, b) orthonormal columns
+
+    # --- Build block Krylov basis K = [B_1 | B_2 | ... | B_L] ---
+    K_blocks = []
+    for _ in range(L):
+        T = Gbf @ B          # (m, b)
+        B = Gbf.T @ T        # (n, b)
+        B, _ = torch.linalg.qr(B)
+        K_blocks.append(B)
+
+    K = torch.cat(K_blocks, dim=1)   # (n, b*L)
+    Q, _ = torch.linalg.qr(K)        # (n, b*L) orthonormal basis
+
+    # --- Project and compute small SVD in float32 for numerical stability ---
+    T = G @ Q.float()                                           # (m, b*L)
+    U_T, S_T, V_T = torch.linalg.svd(T, full_matrices=False)  # thin SVD
+
+    U_k = U_T[:, :k]           # (m, k)
+    S_k = S_T[:k]              # (k,)
+    V_k = Q @ V_T.T[:, :k]    # (n, k)
+
+    return U_k, S_k, V_k
+
+
+def _numuon_svd_update(G, k, niter=2, B0=None):
+    """
+    Compute top-k singular direction update U_k @ V_k^T.
+    - Near full-rank (k >= 99% of min(m,n)): Newton-Schulz (fast, bf16 matmuls).
+    - Low-rank: Block Krylov SVD (Algorithm 3 from the nuMuon paper),
+      with optional warm-start B0 from the previous step's right singular vectors.
+
+    Returns (update, V_k) where V_k can be stored for warm-starting next step.
     """
     m, n = G.shape
-    k = max(1, min(k, min(m, n)))
-    U, S, V = torch.svd_lowrank(G, q=k, niter=niter)
-    return U @ V.T
+    full_rank = min(m, n)
+    k = max(1, min(k, full_rank))
+
+    # Use Newton-Schulz when k is within 1% of full rank — SVD at near-full
+    # rank costs 6x more for negligible quality difference.
+    if k >= full_rank * 0.99:
+        update = zeropower_via_newtonschulz5(G.bfloat16(), steps=_NS_STEPS).to(G.dtype)
+        return update, None
+
+    # Low-rank path: Block Krylov SVD (float32 for numerical stability)
+    orig_dtype = G.dtype
+    U_k, _, V_k = _block_krylov_svd(G.float(), k, L=niter, B0=B0)
+    update = (U_k @ V_k.T).to(orig_dtype)
+    return update, V_k.to(orig_dtype).detach()
 
 
 def _current_rank_fraction(r_start, r_end, schedule, step, total_steps):
@@ -40,17 +110,7 @@ class NuMuon(torch.optim.Optimizer):
     """
     nuMuon - Nuclear-Norm-Constrained Muon
 
-    Paper: NuMuon: Nuclear-Norm-Constrained Muon for Compressible LLM Training
     https://arxiv.org/abs/2603.03597
-
-    nuMuon solves a linear minimization oracle over the feasible set
-    {ΔW | ||ΔW||_2 ≤ ρ, ||ΔW||_* ≤ τ}, whose closed-form solution is
-    ΔW* = -ρ * U_k V_k^T where k = floor(τ/ρ). In practice ρ is absorbed
-    into the learning rate and k is expressed as a fraction of min(d_in, d_out).
-
-    Setting rank_fraction=1.0 (fixed) recovers approximately the same updates
-    as Muon (all singular directions used). Lower rank fractions produce
-    lower-rank weight updates and more compressible trained models.
 
     Arguments:
         muon_params: Parameters to be optimized by nuMuon (>=2D, non-embedding).
@@ -164,8 +224,12 @@ class NuMuon(torch.optim.Optimizer):
                     m, n = g.shape
                     k = max(1, math.ceil(r * min(m, n)))
 
-                    # Top-k SVD update: U_k @ V_k^T
-                    update = _numuon_svd_update(g.bfloat16(), k, niter=svd_niter)
+                    # Top-k SVD update: U_k @ V_k^T (warm-start B0 from last step)
+                    update, v_k = _numuon_svd_update(
+                        g, k, niter=svd_niter, B0=state.get("krylov_V")
+                    )
+                    if v_k is not None:
+                        state["krylov_V"] = v_k  # warm-start for next step
 
                     # Normalize to match Muon's update magnitude: scale by
                     # max(1, m/n)^0.5 * sqrt(min(m,n)/k) so that at rank_fraction=1
@@ -175,6 +239,8 @@ class NuMuon(torch.optim.Optimizer):
                     update = update * scale
 
                     updates_flat[curr_idx : curr_idx + p.numel()] = update.flatten()
+                    # Store the scaled update for effective-rank tracking
+                    state["last_update"] = update.detach()
                 curr_idx += p.numel()
 
             if self.world_size > 1:

@@ -30,6 +30,10 @@ def parse_args(base_parser, args, namespace):
                         help="Explicit downstream task names (combined with --downstream_task_group).")
     parser.add_argument("--eval_cache_dir", default=None, type=none_or_str,
                         help="Directory for eval caches. Defaults to --datasets_dir if not set.")
+    parser.add_argument("--lm_eval_enabled", action="store_true",
+                        help="Enable auxiliary LM evaluation on Wikitext-103.")
+    parser.add_argument("--lm_eval_interval", default=0, type=int,
+                        help="Run Wikitext-103 LM eval every N iterations (0 = disabled).")
     parser.add_argument("--device", default="cuda:0", type=str)
     parser.add_argument(
         "--distributed_backend",
@@ -46,6 +50,10 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--latest_ckpt_interval", default=0, type=int)
     parser.add_argument("--resume_from", default=None, type=str)
     parser.add_argument("--resume_from_swa", default=None, type=str)
+    # Load only the model weights from a checkpoint and start a fresh run
+    # (new optimizer/scheduler, curr_iter=0). Use for fine-tuning or when
+    # switching optimizer type, where full --resume_from is not applicable.
+    parser.add_argument("--init_from", default=None, type=str)
 
     parser.add_argument("--auto_resume", default=True)
 
@@ -63,6 +71,7 @@ def parse_args(base_parser, args, namespace):
         "--dynamics_logger_cfg", default="./src/logger/rotational_logger.yaml", type=str
     )
     parser.add_argument("--wandb_entity", default=None, type=none_or_str)
+    parser.add_argument("--wandb_tags", default=None, type=str, nargs="*")
     parser.add_argument("--log_parameter_norms", action="store_true")
     parser.add_argument("--norm_order", default=2)
 
@@ -116,7 +125,12 @@ def parse_args(base_parser, args, namespace):
             "d-muon",
             "muon-pytorch",  # works only with torch>=2.9
             "adamw-spectral-l1-reg",
+            "adamw-nuclear-prox",
+            "muon-spectral-l1-reg",
+            "muon-nuclear-reg",
+            "soap-spectral-l1-reg",
             "numuon",
+            "cuttlefish",
         ],
     )
     parser.add_argument("--batch_size", default=50, type=int)
@@ -148,6 +162,11 @@ def parse_args(base_parser, args, namespace):
                         help="Schedule for nuMuon rank fraction annealing.")
     parser.add_argument("--numuon_svd_niter", default=2, type=int,
                         help="Randomized SVD power iterations for nuMuon.")
+    # Cuttlefish: low-rank training via periodic SVD projection
+    parser.add_argument("--cuttlefish_rank_fraction", default=0.5, type=float,
+                        help="Fraction of min(m,n) to keep when projecting weights to low rank.")
+    parser.add_argument("--cuttlefish_factorize_every", default=100, type=int,
+                        help="Apply SVD low-rank projection every N optimizer steps.")
     parser.add_argument("--adema_beta3", default=0.9, type=float)
     parser.add_argument("--adema_alpha", default=2.0, type=float)
     parser.add_argument("--adema_beta3_warmup", default=None, type=int)
@@ -367,6 +386,39 @@ def parse_args(base_parser, args, namespace):
                         help="Final spectral_l1_reg_coef for schedule or switch.")
     parser.add_argument("--spectral_l1_reg_schedule", default="none", choices=["none", "linear", "cos"],
                         help="Schedule for spectral_l1_reg_coef: decay from spectral_l1_reg_coef to spectral_l1_reg_coef_final.")
+    parser.add_argument("--spectral_l1_svt_interval", default=0, type=int,
+                        help="adamw-spectral-l1-reg: every N steps replace the Newton-Schulz subgradient "
+                             "step with an exact SVT (singular-value soft-thresholding). 0 disables SVT.")
+    parser.add_argument("--spectral_l1_svt_thresh", default=None, type=float,
+                        help="Absolute singular-value threshold for the periodic SVT step. "
+                             "If unset, uses lr * spectral_l1_reg_coef (the per-step subgradient amount).")
+
+    # muon-nuclear-reg: nuclear-norm subgradient (UV^T, approximated via Newton-Schulz
+    # on W itself) injected into the gradient before the Muon momentum/orthogonalization step.
+    parser.add_argument("--nuclear_reg_ns_steps", default=5, type=int,
+                        help="Newton-Schulz iterations used to approximate U V^T of the weight "
+                             "matrix itself (the nuclear-norm subgradient) in muon-nuclear-reg.")
+    parser.add_argument("--nuclear_reg_svt_interval", default=0, type=int,
+                        help="muon-nuclear-reg: every N steps replace the Newton-Schulz subgradient "
+                             "with an exact proximal step (singular-value soft-thresholding) applied "
+                             "directly to the weights. 0 disables it (always use Newton-Schulz).")
+    parser.add_argument("--nuclear_reg_svt_thresh", default=None, type=float,
+                        help="Absolute singular-value threshold for the periodic SVT step in "
+                             "muon-nuclear-reg. If unset, uses lr * spectral_l1_reg_coef * "
+                             "nuclear_reg_svt_interval.")
+
+    # adamw-nuclear-prox: proximal (singular-value soft-thresholding) nuclear-norm decay
+    parser.add_argument("--nuclear_prox_svd_mode", default="full",
+                        choices=["full", "randomized", "truncated-randomized"],
+                        help="SVD mechanism for the nuclear-norm prox (SVT) step.")
+    parser.add_argument("--nuclear_prox_interval", default=1, type=int,
+                        help="Apply the SVT prox step every N optimizer steps (threshold accumulated).")
+    parser.add_argument("--nuclear_prox_max_rank", default=None, type=int,
+                        help="Rank cap / sketch size for randomized SVD modes. Required for 'truncated-randomized'.")
+    parser.add_argument("--nuclear_prox_oversample", default=10, type=int,
+                        help="Oversampling for randomized SVD modes.")
+    parser.add_argument("--nuclear_prox_power_iters", default=2, type=int,
+                        help="Power iterations for randomized SVD modes.")
 
     # Effective rank logging
     parser.add_argument(

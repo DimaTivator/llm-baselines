@@ -33,8 +33,40 @@ def zeropower_via_newtonschulz5(W, steps):
     return X
 
 
+def _singular_value_threshold(W, tau):
+    """Exact proximal operator of the nuclear norm: singular-value soft-thresholding.
+
+        prox_{tau ||.||_*}(W) = U * diag(max(sigma_i - tau, 0)) * V^T
+
+    Unlike the Newton-Schulz subgradient step (which subtracts tau*U V^T and only
+    shifts the whole spectrum), this sets singular values below ``tau`` to exactly
+    zero, producing genuine rank reduction. Only the surviving components are kept.
+    """
+    orig_dtype = W.dtype
+    U, S, Vh = torch.linalg.svd(W.float(), full_matrices=False)
+    S = torch.clamp(S - tau, min=0.0)
+    keep = S > 0
+    if not torch.any(keep):
+        return torch.zeros_like(W)
+    U = U[:, keep]
+    S = S[keep]
+    Vh = Vh[keep, :]
+    return ((U * S.unsqueeze(0)) @ Vh).to(orig_dtype)
+
+
 class AdamWSpectralL1Reg(torch.optim.Optimizer):
-    """Standard AdamW implementation copied from pytorch with added spectral L1 regularization using Newton-Schulz."""
+    """AdamW with spectral L1 (nuclear-norm) regularization as a faithful proximal step.
+
+    The nuclear-norm prox is applied to the *gradient-stepped* weights
+    Z = W - lr*adam_update (i.e. after the AdamW update), matching proximal
+    gradient descent W_{k+1} = prox(W_k - lr*grad).
+
+    On most steps the prox is approximated by the cheap Newton-Schulz subgradient
+    step (subtract tau*U V^T, tau = lr*spectral_l1_reg_coef). Every ``svt_interval``
+    steps it is instead computed *exactly* via singular-value soft-thresholding
+    (SVT), which zeros sub-threshold singular values and gives real rank reduction.
+    Set ``svt_interval=0`` to disable SVT and use Newton-Schulz on every step.
+    """
 
     def __init__(
         self,
@@ -44,6 +76,8 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
         eps=1e-8,
         weight_decay=0.0,
         spectral_l1_reg_coef=0.1,
+        svt_interval=0,
+        svt_thresh=None,
     ):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
@@ -55,12 +89,16 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
             raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
         if not 0.0 <= weight_decay:
             raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+        if svt_interval < 0:
+            raise ValueError("svt_interval must be >= 0")
         defaults = dict(
             lr=lr,
             betas=betas,
             eps=eps,
             weight_decay=weight_decay,
             spectral_l1_reg_coef=spectral_l1_reg_coef,
+            svt_interval=svt_interval,
+            svt_thresh=svt_thresh,
         )
 
         super(AdamWSpectralL1Reg, self).__init__(params, defaults)
@@ -81,6 +119,8 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
             eps = group["eps"]
             beta1, beta2 = group["betas"]
             spectral_l1_reg_coef = group["spectral_l1_reg_coef"]
+            svt_interval = group["svt_interval"]
+            svt_thresh = group["svt_thresh"]
 
             for p in group["params"]:
                 grad = p.grad
@@ -90,16 +130,6 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
 
                 if grad.is_sparse:
                     raise RuntimeError("Sparse gradients are not supported!")
-
-                # Apply regularization to weight
-                if len(p.data.shape) == 2:
-                    l1_weight_reg = zeropower_via_newtonschulz5(p.data, 5)
-                    # p.data.mul_(1 - lr * wd)  # weight decay
-                    p.data.add_(
-                        l1_weight_reg, alpha=-(lr * spectral_l1_reg_coef)
-                    )
-                else:
-                    p.data.mul_(1 - lr * wd)
 
                 state = self.state[p]
 
@@ -122,6 +152,7 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
                 bias_correction1 = 1 - beta1 ** state["step"]
                 bias_correction2 = 1 - beta2 ** state["step"]
 
+                # --- AdamW gradient step: p.data -> Z = W - lr * adam_update ---
                 # Decay the first and second moment running average coefficient
                 m.lerp_(grad, 1 - beta1)
                 v.mul_(beta2).addcmul_(grad, grad, value=(1 - beta2))
@@ -129,5 +160,35 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
                 denom = (v.sqrt() / math.sqrt(bias_correction2)).add_(eps)
 
                 p.data.addcdiv_(m, denom, value=-(lr / bias_correction1))
+
+                # --- Nuclear-norm prox applied to the stepped weights Z ---
+                # (faithful to W_{k+1} = prox(W_k - lr*grad)). Conv2d weights
+                # [out_ch, in_ch, kh, kw] are viewed as the standard "filter
+                # matrix" [out_ch, in_ch*kh*kw] so the same 2D nuclear-norm
+                # prox applies to them too, unmodified otherwise.
+                orig_shape = p.data.shape
+                is_conv = len(orig_shape) == 4
+                if (len(orig_shape) == 2 or is_conv) and spectral_l1_reg_coef > 0:
+                    W = p.data.view(orig_shape[0], -1) if is_conv else p.data
+                    do_svt = (
+                        svt_interval > 0 and state["step"] % svt_interval == 0
+                    )
+                    if do_svt:
+                        # Exact prox: singular-value soft-thresholding (zeros the tail).
+                        tau = (
+                            svt_thresh
+                            if svt_thresh is not None
+                            else lr * spectral_l1_reg_coef
+                        )
+                        new_W = _singular_value_threshold(W, tau)
+                        p.data.copy_(new_W.view(orig_shape) if is_conv else new_W)
+                    else:
+                        l1_weight_reg = zeropower_via_newtonschulz5(W, 5)
+                        p.data.add_(
+                            l1_weight_reg.view(orig_shape) if is_conv else l1_weight_reg,
+                            alpha=-(lr * spectral_l1_reg_coef),
+                        )
+                elif len(orig_shape) not in (2, 4):
+                    p.data.mul_(1 - lr * wd)
 
         return loss

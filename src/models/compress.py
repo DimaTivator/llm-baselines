@@ -47,11 +47,14 @@ def compress_model_svd(
     model: nn.Module,
     rank: int,
     skip_names: tuple[str, ...] = ("lm_head", "wte", "wpe"),
+    only_names: tuple[str, ...] | None = None,
 ) -> nn.Module:
     """Replace every nn.Linear in *model* with a LowRankLinear approximation.
 
     Layers whose name contains any string from *skip_names* are left intact
-    (embedding / unembedding layers are typically kept full-rank).
+    (embedding / unembedding layers are typically kept full-rank). If
+    *only_names* is given, only layers whose name ends with one of those
+    suffixes are compressed (everything else is left intact).
     Modifies the model in-place and returns it.
     """
     for parent_name, parent_module in list(model.named_modules()):
@@ -61,6 +64,8 @@ def compress_model_svd(
 
             full_name = f"{parent_name}.{child_name}" if parent_name else child_name
             if any(skip in full_name for skip in skip_names):
+                continue
+            if only_names and not any(full_name.endswith(t) for t in only_names):
                 continue
 
             in_f, out_f = child_module.in_features, child_module.out_features
@@ -80,12 +85,15 @@ def compress_model_svd_adaptive(
     model: nn.Module,
     r_gap: int = 0,
     skip_names: tuple[str, ...] = ("lm_head", "wte", "wpe"),
+    only_names: tuple[str, ...] | None = None,
 ) -> nn.Module:
     """Replace every nn.Linear with a LowRankLinear compressed to its own effective rank.
 
     The target rank for each layer is round(effective_rank(W)) + r_gap, so r_gap
     lets you compress slightly more (negative) or less (positive) than the bare
-    effective rank. Modifies the model in-place and returns it.
+    effective rank. If *only_names* is given, only layers whose name ends with
+    one of those suffixes are compressed. Modifies the model in-place and
+    returns it.
     """
     for parent_name, parent_module in list(model.named_modules()):
         for child_name, child_module in list(parent_module.named_children()):
@@ -94,6 +102,8 @@ def compress_model_svd_adaptive(
 
             full_name = f"{parent_name}.{child_name}" if parent_name else child_name
             if any(skip in full_name for skip in skip_names):
+                continue
+            if only_names and not any(full_name.endswith(t) for t in only_names):
                 continue
 
             in_f, out_f = child_module.in_features, child_module.out_features
@@ -125,11 +135,77 @@ def effective_rank(W: torch.Tensor) -> float:
 
 
 @torch.no_grad()
+def stable_rank(W: torch.Tensor) -> float:
+    """Stable rank of a matrix.
+
+    srank(W) = ||W||_F^2 / ||W||_2^2 = sum_i sigma_i^2 / sigma_1^2.
+    Returns 0 for the all-zero matrix. For nonzero matrices, stable rank ranges
+    from 1 to rank(W).
+    """
+    s = torch.linalg.svdvals(W.float())
+    spectral_norm_sq = s[0].square()
+    if spectral_norm_sq == 0:
+        return 0.0
+    return (s.square().sum() / spectral_norm_sq).item()
+
+
+@torch.no_grad()
+def compress_embeddings_inplace(
+    model: nn.Module,
+    rank,
+    only_names: tuple[str, ...],
+) -> dict[str, int]:
+    """Replace token-embedding matrices with a rank-r SVD approximation in place.
+
+    Only ``nn.Embedding`` modules whose name ends with one of *only_names* are
+    touched. The (vocab x n_embd) weight is overwritten by its rank-r SVD
+    reconstruction (dense, same shape) rather than restructured into a factored
+    module — this keeps tying intact: when ``wte.weight is lm_head.weight``
+    (the default), overwriting ``weight.data`` updates the output head too, so a
+    single shared low-rank matrix is used for both embedding lookup and logits.
+
+    ``rank`` may be an int or the string ``"auto"`` (per-matrix effective rank).
+    Returns ``{name: retained_rank}`` for each embedding actually reduced, so the
+    caller can fold it into its compression-rate accounting.
+    """
+    auto = isinstance(rank, str) and rank == "auto"
+    info: dict[str, int] = {}
+    for name, m in model.named_modules():
+        if not isinstance(m, nn.Embedding):
+            continue
+        if not any(name.endswith(t) for t in only_names):
+            continue
+
+        W = m.weight.data.float()  # (vocab, n_embd)
+        max_rank = min(W.shape)
+        r = round(effective_rank(W)) if auto else int(rank)
+        r = max(1, min(r, max_rank))
+        if r >= max_rank:
+            continue  # no compression possible
+
+        U, S, Vh = torch.linalg.svd(W, full_matrices=False)
+        W_approx = (U[:, :r] * S[:r].unsqueeze(0)) @ Vh[:r, :]
+        m.weight.data = W_approx.to(m.weight.dtype)
+        info[name] = r
+
+    return info
+
+
+def _weight_as_2d(module: nn.Module) -> torch.Tensor:
+    """Linear weights are already 2D; Conv2d weights [out_ch, in_ch, kh, kw]
+    are viewed as the standard "filter matrix" [out_ch, in_ch*kh*kw], matching
+    the reshape AdamWSpectralL1Reg applies before its nuclear-norm prox."""
+    W = module.weight.data
+    return W.view(W.shape[0], -1) if isinstance(module, nn.Conv2d) else W
+
+
+@torch.no_grad()
 def model_effective_ranks(
     model: nn.Module,
     skip_names: tuple[str, ...] = ("lm_head", "wte", "wpe"),
 ) -> dict[str, float]:
-    """Compute effective rank for every 2-D weight matrix in *model*.
+    """Compute effective rank for every Linear/Conv2d weight matrix in *model*
+    (Conv2d weights viewed as a 2D filter matrix, see `_weight_as_2d`).
 
     Returns a dict with:
       - ``"effective_rank/<layer_name>"`` for each qualifying layer
@@ -141,18 +217,54 @@ def model_effective_ranks(
     total_weight = 0
 
     for name, module in model.named_modules():
-        if not isinstance(module, nn.Linear):
+        if not isinstance(module, (nn.Linear, nn.Conv2d)):
             continue
         if any(skip in name for skip in skip_names):
             continue
-        er = effective_rank(module.weight.data)
+        W = _weight_as_2d(module)
+        er = effective_rank(W)
         ranks[f"effective_rank/{name}"] = er
-        k = min(module.weight.shape)
+        k = min(W.shape)
         weighted_sum += er * k
         total_weight += k
 
     if total_weight > 0:
         ranks["effective_rank/mean_weighted"] = weighted_sum / total_weight
+
+    return ranks
+
+
+@torch.no_grad()
+def model_stable_ranks(
+    model: nn.Module,
+    skip_names: tuple[str, ...] = ("lm_head", "wte", "wpe"),
+) -> dict[str, float]:
+    """Compute stable rank for every Linear/Conv2d weight matrix in *model*.
+
+    Conv2d weights are viewed as 2D filter matrices, matching
+    :func:`model_effective_ranks`. Returns a dict with:
+      - ``"stable_rank/<layer_name>"`` for each qualifying layer
+      - ``"stable_rank/mean_weighted"`` — weighted average across layers,
+        weights = min(out, in) (number of singular values per layer)
+    """
+    ranks: dict[str, float] = {}
+    weighted_sum = 0.0
+    total_weight = 0
+
+    for name, module in model.named_modules():
+        if not isinstance(module, (nn.Linear, nn.Conv2d)):
+            continue
+        if any(skip in name for skip in skip_names):
+            continue
+        W = _weight_as_2d(module)
+        sr = stable_rank(W)
+        ranks[f"stable_rank/{name}"] = sr
+        k = min(W.shape)
+        weighted_sum += sr * k
+        total_weight += k
+
+    if total_weight > 0:
+        ranks["stable_rank/mean_weighted"] = weighted_sum / total_weight
 
     return ranks
 

@@ -39,6 +39,7 @@ def train(
     distributed_backend,
     cfg,
     downstream_evaluator=None,
+    lm_evaluator=None,
 ):
     not_compiled_model = model
     if cfg.compile:
@@ -71,6 +72,16 @@ def train(
             cfg.device,
         )
         load_worker_state(ckpt_dir)
+    elif cfg.init_from:
+        # Fine-tuning / optimizer-change start: load only the model weights and
+        # begin a fresh run (new optimizer & scheduler, curr_iter=0). Optimizer
+        # and worker/dataloader state are intentionally NOT restored.
+        print(f"\nInitializing Model Weights From {cfg.init_from}")
+        ckpt = torch.load(
+            Path(cfg.init_from) / "main.pt", map_location=cfg.device
+        )
+        model.load_state_dict(ckpt["model"])
+        curr_iter = 0
     else:
         curr_iter = 0
 
@@ -115,7 +126,7 @@ def train(
     substep = curr_iter * cfg.acc_steps
     train_reader, val_reader = datareaders["train"], datareaders["val"]
     train_reader.set_step(substep)
-    stats = {"train_loss": [], "val_loss": [], "val_pp": [], "val_acc": [], "downstream": []}
+    stats = {"train_loss": [], "val_loss": [], "val_pp": [], "val_acc": [], "downstream": [], "aux_lm": []}
     grad_norms = []
     _pending_grad_er: dict[str, float] = {}
     model.train()
@@ -189,6 +200,11 @@ def train(
             )
             if downstream_logs is not None:
                 stats["downstream"].append(downstream_logs)
+
+        if lm_evaluator is not None and lm_evaluator.should_run(curr_iter):
+            lm_logs = lm_evaluator.evaluate(curr_iter, model, type_ctx, distributed_backend)
+            if lm_logs is not None:
+                stats["aux_lm"].append(lm_logs)
 
         if curr_iter == cfg.iterations:
             # Save checkpoints and evaluate at final iteration, but no need to train further

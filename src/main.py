@@ -33,7 +33,12 @@ from optim.sign import Signum
 from optim.soap import SOAP
 from optim.sophia import SophiaG
 from optim.adamw_spectral_L1_reg import AdamWSpectralL1Reg
+from optim.adamw_nuclear_prox import AdamWNuclearProx
+from optim.muon_spectral_L1_reg import MuonSpectralL1Reg
+from optim.muon_nuclear_reg import MuonNuclearReg
+from optim.soap_spectral_L1_reg import SOAPSpectralL1Reg
 from optim.numuon import NuMuon
+from optim.cuttlefish import Cuttlefish
 
 
 def get_args():
@@ -76,7 +81,7 @@ def main(args, parser):
     if args.eval_batch_size is None:
         args.eval_batch_size = args.batch_size
 
-    downstream_evaluator = build_evaluators(args)
+    downstream_evaluator, lm_evaluator = build_evaluators(args)
 
     if distributed_backend.is_master_process() and args.wandb:
         wandb.init(
@@ -84,6 +89,7 @@ def main(args, parser):
             name=exp_name,
             config=vars(args),
             entity=args.wandb_entity,
+            tags=args.wandb_tags,
         )
         wandb.define_metric("iter")
         wandb.define_metric("train/*", step_metric="iter")
@@ -91,6 +97,9 @@ def main(args, parser):
         wandb.define_metric("lr", step_metric="iter")
         if downstream_evaluator is not None:
             for metric_glob in downstream_evaluator.wandb_metric_globs():
+                wandb.define_metric(metric_glob, step_metric="iter")
+        if lm_evaluator is not None:
+            for metric_glob in lm_evaluator.wandb_metric_globs():
                 wandb.define_metric(metric_glob, step_metric="iter")
 
     print(f"Starting Experiment: {exp_name}")
@@ -362,6 +371,82 @@ def main(args, parser):
             betas=(args.beta1, args.beta2),
             weight_decay=args.weight_decay,
             spectral_l1_reg_coef=args.spectral_l1_reg_coef,
+            svt_interval=args.spectral_l1_svt_interval,
+            svt_thresh=args.spectral_l1_svt_thresh,
+        )
+    elif args.opt == "muon-spectral-l1-reg":
+        param_list = (
+            list(model.parameters())
+            if args.distributed_backend is None
+            else list(model.module.parameters())
+        )
+        opt = MuonSpectralL1Reg(
+            muon_params=param_list,
+            lr=args.muon_lr_factor,
+            momentum=args.momentum,
+            nesterov=args.nesterov,
+            ns_steps=args.muon_ns_steps,
+            adamw_params=None,
+            adamw_lr=args.lr,
+            adamw_betas=(args.beta1, args.beta2),
+            adamw_eps=1e-8,
+            adamw_wd=args.weight_decay,
+            spectral_l1_reg_coef=args.spectral_l1_reg_coef,
+            svt_interval=args.spectral_l1_svt_interval,
+            svt_thresh=args.spectral_l1_svt_thresh,
+        )
+    elif args.opt == "muon-nuclear-reg":
+        param_list = (
+            list(model.parameters())
+            if args.distributed_backend is None
+            else list(model.module.parameters())
+        )
+        opt = MuonNuclearReg(
+            muon_params=param_list,
+            lr=args.muon_lr_factor,
+            momentum=args.momentum,
+            nesterov=args.nesterov,
+            ns_steps=args.muon_ns_steps,
+            adamw_params=None,
+            adamw_lr=args.lr,
+            adamw_betas=(args.beta1, args.beta2),
+            adamw_eps=1e-8,
+            adamw_wd=args.weight_decay,
+            spectral_l1_reg_coef=args.spectral_l1_reg_coef,
+            nuclear_reg_ns_steps=args.nuclear_reg_ns_steps,
+            svt_interval=args.nuclear_reg_svt_interval,
+            svt_thresh=args.nuclear_reg_svt_thresh,
+        )
+    elif args.opt == "soap-spectral-l1-reg":
+        opt = SOAPSpectralL1Reg(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            shampoo_beta=args.shampoo_beta,
+            weight_decay=args.weight_decay,
+            precondition_frequency=args.precondition_frequency,
+            max_precond_dim=args.max_precond_dim,
+            merge_dims=args.merge_dims,
+            precondition_1d=args.precondition_1d,
+            normalize_grads=args.normalize_grads,
+            data_format=args.soap_data_format,
+            correct_bias=args.correct_bias,
+            spectral_l1_reg_coef=args.spectral_l1_reg_coef,
+            svt_interval=args.spectral_l1_svt_interval,
+            svt_thresh=args.spectral_l1_svt_thresh,
+        )
+    elif args.opt == "adamw-nuclear-prox":
+        opt = AdamWNuclearProx(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            spectral_l1_reg_coef=args.spectral_l1_reg_coef,
+            prox_interval=args.nuclear_prox_interval,
+            svd_mode=args.nuclear_prox_svd_mode,
+            max_rank=args.nuclear_prox_max_rank,
+            svd_oversample=args.nuclear_prox_oversample,
+            svd_power_iters=args.nuclear_prox_power_iters,
         )
     elif args.opt == "numuon":
         param_list = (
@@ -371,7 +456,7 @@ def main(args, parser):
         )
         opt = NuMuon(
             muon_params=param_list,
-            lr=args.muon_lr_factor,
+            lr=args.lr,
             momentum=args.momentum,
             nesterov=args.nesterov,
             rank_fraction=args.numuon_rank_fraction,
@@ -384,6 +469,17 @@ def main(args, parser):
             adamw_betas=(args.beta1, args.beta2),
             adamw_eps=1e-8,
             adamw_wd=args.weight_decay,
+        )
+    elif args.opt == "cuttlefish":
+        opt = Cuttlefish(
+            group_specs,
+            lr=args.lr,
+            rank_fraction=args.cuttlefish_rank_fraction,
+            factorize_every=args.cuttlefish_factorize_every,
+            inner_opt_cls=torch.optim.AdamW,
+            betas=(args.beta1, args.beta2),
+            eps=1e-8,
+            weight_decay=args.weight_decay,
         )
     else:
         opt = torch.optim.SGD(
@@ -417,7 +513,7 @@ def main(args, parser):
                     div_factor=1e2,
                     final_div_factor=args.final_div_factor,
                 )
-                if args.opt not in ("muon", "numuon")
+                if args.opt not in ("muon", "numuon", "muon-spectral-l1-reg", "muon-nuclear-reg")
                 else CombinedScheduler(opt, args)
             )
         elif args.scheduler == "cos_inf":
@@ -430,7 +526,7 @@ def main(args, parser):
             )
             scheduler = (
                 torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
-                if args.opt not in ("muon", "numuon")
+                if args.opt not in ("muon", "numuon", "muon-spectral-l1-reg", "muon-nuclear-reg")
                 else CombinedScheduler(opt, args)
             )
         elif args.scheduler == "wsd":
@@ -444,7 +540,7 @@ def main(args, parser):
             )
             scheduler = (
                 torch.optim.lr_scheduler.LambdaLR(opt, lambda_schedule)
-                if args.opt not in ("muon", "numuon")
+                if args.opt not in ("muon", "numuon", "muon-spectral-l1-reg", "muon-nuclear-reg")
                 else CombinedScheduler(opt, args)
             )
         else:
@@ -474,6 +570,7 @@ def main(args, parser):
         distributed_backend=distributed_backend,
         cfg=args,
         downstream_evaluator=downstream_evaluator,
+        lm_evaluator=lm_evaluator,
     )
 
     stats["args"] = vars(args)

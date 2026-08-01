@@ -6,6 +6,15 @@ from torch.utils.data import DataLoader
 
 from .task_groups import resolve_downstream_tasks
 
+# Only these downstream keys are sent to wandb; all metrics are still printed.
+_WANDB_KEYS = frozenset({
+    "downstream/arc_easy/acc_v2",
+    "downstream/arc_challenge/len_norm_v2",
+    "downstream/gsm8k_gold_bpb_5shot/bpb_v2",
+    "downstream/hellaswag/len_norm_v2",
+    "downstream/piqa/len_norm_v2",
+})
+
 
 def _move_to_device(value, device):
     if isinstance(value, torch.Tensor):
@@ -197,7 +206,11 @@ class DownstreamEvaluator:
         )
 
         if self.cfg.wandb:
-            wandb.log(logs)
+            wandb_logs = {
+                k: v for k, v in logs.items()
+                if k in _WANDB_KEYS or k in ("iter", "consumed_tokens")
+            }
+            wandb.log(wandb_logs)
 
         if was_training:
             model.train()
