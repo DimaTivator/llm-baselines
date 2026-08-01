@@ -8,6 +8,7 @@ if [ "$(basename "$0")" != "git" ]; then
     mkdir -p "$INSTALL_DIR"
     cp "$0" "$INSTALL_DIR/git"
     chmod +x "$INSTALL_DIR/git"
+    cp "$(dirname "$0")/mlsub_bootstrap_env.sh" /home/jovyan/mlsub_bootstrap_env.sh
     echo "Installed mlsub git wrapper at $INSTALL_DIR/git"
     exit 0
 fi
