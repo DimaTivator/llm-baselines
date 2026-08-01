@@ -14,6 +14,7 @@ if [ "${MLSUB_CAPTURE_LOG:-0}" = "1" ] && [ "${MLSUB_CAPTURE_ACTIVE:-0}" != "1" 
 fi
 
 DISTRIBUTED_ARGS=()
+TRAIN_LAUNCHER=(python)
 if [ "${OMPI_COMM_WORLD_SIZE:-1}" -gt 1 ]; then
     export RANK=${RANK:-"${OMPI_COMM_WORLD_RANK}"}
     export WORLD_SIZE=${WORLD_SIZE:-"${OMPI_COMM_WORLD_SIZE}"}
@@ -50,7 +51,12 @@ if [ "$PREPARE_FINEWEBEDU_H200" = "1" ]; then
 fi
 
 if [[ "$DEVICE" == cuda* ]]; then
-    python -c 'import torch; print(f"GPU: {torch.cuda.get_device_name(0)}")' || exit 1
+    GPU_COUNT=$(python -c 'import torch; print(torch.cuda.device_count())') || exit 1
+    python -c 'import torch; print(f"GPUs: {torch.cuda.device_count()} x {torch.cuda.get_device_name(0)}")' || exit 1
+    if [ "$GPU_COUNT" -gt 1 ] && [ "${OMPI_COMM_WORLD_SIZE:-1}" -eq 1 ]; then
+        TRAIN_LAUNCHER=(torchrun --standalone --nproc_per_node "$GPU_COUNT")
+        DISTRIBUTED_ARGS=(--distributed_backend nccl)
+    fi
 fi
 
 MODEL_SIZE=${MODEL_SIZE:-"500m"}
@@ -101,7 +107,7 @@ for SPECTRAL_L1_COEF_START in "${SPECTRAL_L1_COEF_VALUES[@]}"; do
     HF_CHECKPOINT_PATH="${HF_CHECKPOINT_PREFIX}/${EXP_NAME}/ckpts/latest/main.pt"
     echo "=== spectral_l1_reg_coef=${SPECTRAL_L1_COEF_START}  exp=${EXP_NAME} ==="
 
-    python ./src/main.py \
+    "${TRAIN_LAUNCHER[@]}" ./src/main.py \
         --experiment_name "${EXP_NAME}" \
         --results_base_folder "${RESULTS_BASE_FOLDER}" \
         --device "${DEVICE}" \
