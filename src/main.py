@@ -39,6 +39,7 @@ from optim.muon_nuclear_reg import MuonNuclearReg
 from optim.soap_spectral_L1_reg import SOAPSpectralL1Reg
 from optim.numuon import NuMuon
 from optim.cuttlefish import Cuttlefish
+from optim.utils import upload_checkpoint_to_hf
 
 
 def get_args():
@@ -577,6 +578,17 @@ def main(args, parser):
     if distributed_backend.is_master_process():
         with open(exp_dir / "summary.json", "w") as fs:
             json.dump(stats, fs)
+
+        if args.hf_checkpoint_repo is not None:
+            path_in_repo = args.hf_checkpoint_path or f"{exp_name}/ckpts/latest/main.pt"
+            upload_checkpoint_to_hf(
+                model=model,
+                opt=opt,
+                scheduler=scheduler,
+                itr=args.iterations,
+                repo_id=args.hf_checkpoint_repo,
+                path_in_repo=path_in_repo,
+            )
 
     if args.svd_rank is not None and distributed_backend.is_master_process():
         raw_model = distributed_backend.get_raw_model(model)

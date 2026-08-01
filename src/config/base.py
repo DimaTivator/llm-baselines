@@ -48,6 +48,8 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--results_base_folder", default="./exps", type=str)
     parser.add_argument("--permanent_ckpt_interval", default=0, type=int)
     parser.add_argument("--latest_ckpt_interval", default=0, type=int)
+    parser.add_argument("--hf_checkpoint_repo", default=None, type=none_or_str)
+    parser.add_argument("--hf_checkpoint_path", default=None, type=none_or_str)
     parser.add_argument("--resume_from", default=None, type=str)
     parser.add_argument("--resume_from_swa", default=None, type=str)
     # Load only the model weights from a checkpoint and start a fresh run

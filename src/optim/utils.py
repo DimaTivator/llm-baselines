@@ -1,5 +1,6 @@
 import math
 import random
+import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -183,6 +184,36 @@ def save_checkpoint(model, opt, scheduler, itr, ckpt_dir: Path):
     }
     ckpt_dir.mkdir(exist_ok=True, parents=True)
     torch.save(checkpoint, ckpt_dir / "main.pt")
+
+
+def upload_checkpoint_to_hf(
+    model,
+    opt,
+    scheduler,
+    itr,
+    repo_id,
+    path_in_repo,
+):
+    """Serialize a full checkpoint in ephemeral storage and upload it to HF."""
+    from huggingface_hub import HfApi
+
+    with tempfile.TemporaryDirectory(prefix="hf_checkpoint_", dir="/tmp") as temp_dir:
+        checkpoint_dir = Path(temp_dir)
+        save_checkpoint(model, opt, scheduler, itr, checkpoint_dir)
+        checkpoint_path = checkpoint_dir / "main.pt"
+        size_gib = checkpoint_path.stat().st_size / (1024**3)
+        print(
+            f"Uploading final checkpoint ({size_gib:.2f} GiB) to "
+            f"hf://{repo_id}/{path_in_repo}"
+        )
+        HfApi().upload_file(
+            path_or_fileobj=checkpoint_path,
+            path_in_repo=path_in_repo,
+            repo_id=repo_id,
+            repo_type="model",
+            commit_message=f"Upload final checkpoint at iteration {itr}",
+        )
+        print(f"Uploaded final checkpoint to hf://{repo_id}/{path_in_repo}")
 
 
 def load_checkpoint(model, opt, scheduler, ckpt_path, device):
