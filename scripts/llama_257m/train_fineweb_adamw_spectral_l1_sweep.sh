@@ -22,6 +22,9 @@ DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 TOKENIZED_DATA_DIR=${TOKENIZED_DATA_DIR:-"${HOME}/tokenized_data"}
 RESULTS_BASE_FOLDER=${RESULTS_BASE_FOLDER:-"./exps/cf_bruteforce_124M"}
 DEVICE=${DEVICE:-"cuda:0"}
+if [[ "$DEVICE" == cuda* ]]; then
+    python -c 'import torch; print(f"GPU: {torch.cuda.get_device_name(0)}")'
+fi
 
 MODEL_SIZE=${MODEL_SIZE:-"257m"}
 OPT="adamw-spectral-l1-reg"
