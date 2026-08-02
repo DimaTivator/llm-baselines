@@ -31,6 +31,9 @@ if [ "${INSTALL_MLSUB_DEPS:-0}" = "1" ]; then
     python -m pip install --user -q -r requirements-mlsub.txt || exit 1
 fi
 
+python -c 'import datasets, huggingface_hub, numpy, tiktoken, torch, tqdm, transformers, wandb, zstandard' \
+    || { echo "Missing core training dependencies. Run scripts/install_mlsub_training_deps.sh first."; exit 1; }
+
 DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 TOKENIZED_DATA_DIR=${TOKENIZED_DATA_DIR:-"${HOME}/tokenized_data"}
 RESULTS_BASE_FOLDER=${RESULTS_BASE_FOLDER:-"/tmp/llama500m_spectral_l1"}
@@ -85,6 +88,11 @@ WANDB_ENTITY=${WANDB_ENTITY:-"andrey"}
 HF_CHECKPOINT_REPO=${HF_CHECKPOINT_REPO:-"DimaTivator/effpretrain_ckpts"}
 HF_CHECKPOINT_PREFIX=${HF_CHECKPOINT_PREFIX:-"spectral_l1_500m"}
 EXPERIMENT_PREFIX=${EXPERIMENT_PREFIX:-""}
+
+if [ "$DOWNSTREAM_EVAL_ENABLED" = "1" ]; then
+    python -c 'from olmo_eval import HFTokenizer, ICLMetric, build_task; import cached_path, torchmetrics' \
+        || { echo "Missing downstream dependencies. Run scripts/install_mlsub_training_deps.sh first."; exit 1; }
+fi
 
 read -r -a SPECTRAL_L1_COEF_VALUES <<< "${SPECTRAL_L1_COEF_START_LIST:-0 0.5 0.7 1 1.2 1.4 1.6 1.8 2 3}"
 

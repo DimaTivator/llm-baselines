@@ -5,3 +5,4 @@ wandb
 datasets
 zstandard
 numpy==1.22.4
+ai2-olmo-eval==0.8.5
