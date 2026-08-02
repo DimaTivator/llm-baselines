@@ -82,6 +82,7 @@ FINEWEBEDU_MAX_FILES=${FINEWEBEDU_MAX_FILES:-5}
 EFFECTIVE_RANK_INTERVAL=${EFFECTIVE_RANK_INTERVAL:-500}
 DOWNSTREAM_EVAL_INTERVAL=${DOWNSTREAM_EVAL_INTERVAL:-4000}
 DOWNSTREAM_EVAL_ENABLED=${DOWNSTREAM_EVAL_ENABLED:-1}
+DOWNSTREAM_TASK_GROUP=${DOWNSTREAM_TASK_GROUP:-"basic_v2"}
 WANDB_ENABLED=${WANDB_ENABLED:-1}
 WANDB_PROJECT=${WANDB_PROJECT:-"ns_weights"}
 WANDB_ENTITY=${WANDB_ENTITY:-"andrey"}
@@ -150,7 +151,7 @@ for SPECTRAL_L1_COEF_START in "${SPECTRAL_L1_COEF_VALUES[@]}"; do
         --tokenized_data_dir "${TOKENIZED_DATA_DIR}" \
         --effective_rank_interval "${EFFECTIVE_RANK_INTERVAL}" \
         --downstream_eval_interval "${DOWNSTREAM_EVAL_INTERVAL}" \
-        --downstream_task_group basic_v2 \
+        --downstream_task_group "${DOWNSTREAM_TASK_GROUP}" \
         --hf_checkpoint_repo "${HF_CHECKPOINT_REPO}" \
         --hf_checkpoint_path "${HF_CHECKPOINT_PATH}" \
         "${DISTRIBUTED_ARGS[@]}" \
