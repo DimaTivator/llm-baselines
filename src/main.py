@@ -23,6 +23,7 @@ from optim.adopt import ADOPT
 from optim.base import train
 from optim.lamb import Lamb
 from optim.lion import Lion
+from optim.lion_spectral_L1_reg import LionSpectralL1Reg
 from optim.mars import MARS
 from optim.muon import CombinedScheduler, DistributedMuon, Muon
 from optim.prodigy import Prodigy
@@ -225,6 +226,16 @@ def main(args, parser):
             lr=args.lr,
             betas=(args.beta1, args.beta2),
             weight_decay=args.weight_decay,
+        )
+    elif args.opt == "lion-spectral-l1-reg":
+        opt = LionSpectralL1Reg(
+            group_specs,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            spectral_l1_reg_coef=args.spectral_l1_reg_coef,
+            svt_interval=args.spectral_l1_svt_interval,
+            svt_thresh=args.spectral_l1_svt_thresh,
         )
     elif args.opt == "sf-adamw":
         opt = AdamWScheduleFree(

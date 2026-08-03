@@ -112,6 +112,7 @@ def parse_args(base_parser, args, namespace):
             "soap",
             "ademamix",
             "lion",
+            "lion-spectral-l1-reg",
             "sf-adamw",
             "sf-sgd",
             "signsgd",
@@ -389,7 +390,7 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--spectral_l1_reg_schedule", default="none", choices=["none", "linear", "cos"],
                         help="Schedule for spectral_l1_reg_coef: decay from spectral_l1_reg_coef to spectral_l1_reg_coef_final.")
     parser.add_argument("--spectral_l1_svt_interval", default=0, type=int,
-                        help="adamw-spectral-l1-reg: every N steps replace the Newton-Schulz subgradient "
+                        help="adamw/lion-spectral-l1-reg: every N steps replace the Newton-Schulz subgradient "
                              "step with an exact SVT (singular-value soft-thresholding). 0 disables SVT.")
     parser.add_argument("--spectral_l1_svt_thresh", default=None, type=float,
                         help="Absolute singular-value threshold for the periodic SVT step. "
