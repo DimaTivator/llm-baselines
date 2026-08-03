@@ -7,7 +7,7 @@ GPU=${GPU:-1}
 
 MODEL_SIZE="124m"
 OPT="lion-spectral-l1-reg"
-LR_LIST=(5e-3)
+LR_LIST=(1e-3)
 N_EMBD=768
 N_HEAD=12
 N_LAYER=12
