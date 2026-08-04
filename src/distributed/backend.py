@@ -28,5 +28,8 @@ class DistributedBackend(object):
     def get_world_size(self):
         raise NotImplementedError
 
+    def barrier(self):
+        pass
+
     def finalize(self):
         pass

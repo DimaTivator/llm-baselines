@@ -616,6 +616,11 @@ def main(args, parser):
         torch.save({"model": compressed.state_dict(), "svd_rank": args.svd_rank}, compressed_dir / "main.pt")
         print(f"  saved to {compressed_dir / 'main.pt'}")
 
+    # Rank 0 may still be serializing and uploading the final checkpoint while
+    # other ranks have already finished. Keep every rank in this run until all
+    # rank-0-only post-processing completes, otherwise a shell sweep can start
+    # the next DDP run with only a subset of ranks.
+    distributed_backend.barrier()
     distributed_backend.finalize()
 
 
