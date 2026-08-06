@@ -1,7 +1,6 @@
 from .ademamix import AdEMAMix
 # from .muon import Muon, DistributedMuon
 # from .rmsprop import RMSpropW
-from .adopt import ADOPT
 from .lion import Lion
 # from .ns_ademamix import NSAdEMAMix
 from .soap.soap_harvard import SOAP

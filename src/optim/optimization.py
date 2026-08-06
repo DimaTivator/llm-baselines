@@ -14,7 +14,7 @@ from .memory_efficient.slim_adam import DEFAULT_LAYER_MAP_PATH as SLIM_ADAM_DEFA
 from .memory_efficient.lora import LoRAOptimizer
 from .memory_efficient.lora_rite import LoRARiteOptimizer
 from .memory_efficient.loro import LOROAdamW
-from .sota_opt import AdEMAMix, dion, Adan, ADOPT, SOAP, MARS, MARS_M, SWAN, DistributedShampoo
+from .sota_opt import AdEMAMix, dion, Adan, SOAP, MARS, MARS_M, SWAN, DistributedShampoo
 from .multi_optimizer import MultiOptimizer
 
 
@@ -217,6 +217,8 @@ def get_optimizer(param_groups, args, model=None, qargs=None):
             # fused = False,
         )
     elif optimizer_name == "adopt":
+        from .sota_opt.adopt import ADOPT
+
         optimizer = ADOPT(
             param_groups,
             lr=args.lr,
