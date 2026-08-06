@@ -85,6 +85,26 @@ def apply_hybrid_lora(
     )
 
 
+def freeze_non_lora_parameters(model: nn.Module) -> None:
+    """Freeze every parameter except standard LoRA adapter factors."""
+    lora_param_ids = {
+        id(parameter)
+        for module in model.modules()
+        if isinstance(module, HybridLoRALinear)
+        for parameter in (module.lora_A, module.lora_B)
+    }
+
+    for parameter in model.parameters():
+        parameter.requires_grad_(id(parameter) in lora_param_ids)
+
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    print(
+        f"LoRA-only pretraining: {trainable / 1e6:.2f}M trainable adapter params, "
+        f"{frozen / 1e6:.2f}M frozen base params"
+    )
+
+
 def get_hybrid_lora_param_groups(
     model: nn.Module,
     weight_decay: float,
@@ -141,7 +161,7 @@ def get_hybrid_lora_param_groups(
 
     decay_params, no_decay_params = [], []
     for pname, p in model.named_parameters():
-        if id(p) in lora_param_ids:
+        if id(p) in lora_param_ids or not p.requires_grad:
             continue
         if any(kw in pname for kw in _NO_DECAY_KW):
             no_decay_params.append(p)

@@ -131,7 +131,7 @@ def parse_args(base_parser, args, namespace):
             "apollo_adamw", "ldadamw", "fira_adamw", "galore_adafactor", "adamem",  # Apollo/LD/Fira/GaLore/AdaMeM
             "ademamix", "dion", "adan", "adopt", "soap", "mars", "mars_m", "muon",  "swan", "shampoo",  # SOTA
             "solo_adamw", "solo_triton_adamw", "muon", "muonlite",
-            "lora", "lora_rite",  # LoRA wrapper / LoRA-Rite
+            "lora", "lora_rite", "lora_pretrain",  # LoRA wrapper / LoRA-Rite / adapter-only pretraining
             "loro", "loro_adpt",  # LORO low-rank optimiser
             "coap_adamw",  # COAP
             "cosmos",  # COSMOS

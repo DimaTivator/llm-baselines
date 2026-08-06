@@ -230,6 +230,26 @@ def main(args):
             riemannian_lora=_hybrid_riemannian,
         )
 
+    # Standard LoRA pretraining: only adapter factors are trainable.
+    if args.opt == "lora_pretrain":
+        from optim.memory_efficient.hybrid_lora import (
+            apply_hybrid_lora,
+            freeze_non_lora_parameters,
+        )
+
+        lora_rank = (
+            args.lora_rank
+            if args.lora_rank > 0
+            else int(args.density * args.n_embd)
+        )
+        apply_hybrid_lora(
+            model,
+            rank=lora_rank,
+            alpha=args.lora_alpha,
+            scope="all",
+        )
+        freeze_non_lora_parameters(model)
+
     # ── LORO: replace Linear modules with LowRank *before* DDP ────────
     if args.opt in ("loro", "loro_adpt"):
         from optim.memory_efficient.loro.utils import apply_loro
@@ -278,7 +298,7 @@ def main(args):
         optimized_params_cnt = sum(
             p.numel() for g in group_specs for p in g["params"]
         )
-    elif args.opt == "hybrid_lora":
+    elif args.opt in ("hybrid_lora", "lora_pretrain"):
         # Param groups are built in the optimizer block below (needs both base / lora splits).
         group_specs = None
         optimized_params_cnt = sum(
@@ -306,7 +326,23 @@ def main(args):
         wandb.log({"parameters": params_cnt, "optimized_parameters": optimized_params_cnt})
 
     # ── Optimiser ─────────────────────────────────────────────────────────
-    if args.opt == "hybrid_lora":
+    if args.opt == "lora_pretrain":
+        from optim.memory_efficient.hybrid_lora import get_hybrid_lora_param_groups
+
+        base_groups, lora_groups = get_hybrid_lora_param_groups(
+            distributed_backend.get_raw_model(model),
+            weight_decay=args.weight_decay,
+            base_lr=args.lr,
+            lora_lr=args.lr,
+        )
+        assert not base_groups, "LoRA-only pretraining must not optimize base parameters."
+        opt = torch.optim.AdamW(
+            lora_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            eps=args.eps,
+        )
+    elif args.opt == "hybrid_lora":
         from optim.memory_efficient.hybrid_lora import HybridLoRAOptimizer, get_hybrid_lora_param_groups, SignSGD
         from optim.memory_efficient.frugal import Lion
 
