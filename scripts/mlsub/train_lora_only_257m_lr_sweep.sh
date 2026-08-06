@@ -40,6 +40,7 @@ RESULTS_DIR=${RESULTS_DIR:-"/home/jovyan/exps/huawei-lora-only-257m"}
 EVAL_CACHE_DIR=${EVAL_CACHE_DIR:-"/home/jovyan/evals_cache"}
 WANDB_PROJECT=${WANDB_PROJECT:-"fp8-pretrain"}
 WANDB_GROUP=${WANDB_GROUP:-"lora-only-rank256-1xC-257m"}
+SCHEDULER=cos
 
 read -r -a LR_VALUES <<< "${LR_LIST_INPUT//,/ }"
 if [ "${#LR_VALUES[@]}" -ne 4 ] && [ "${SMOKE_TEST:-0}" != "1" ]; then
@@ -69,7 +70,8 @@ PY
     BATCH_SIZE=1
     ACC_STEPS=1
     ITERATIONS=2
-    WARMUP=1
+    WARMUP=0
+    SCHEDULER=none
     LORA_RANK=16
     LORA_ALPHA=16
     LR_VALUES=(1e-3)
@@ -127,7 +129,7 @@ for LR in "${LR_VALUES[@]}"; do
         --beta1 0.9 \
         --beta2 0.999 \
         --grad-clip 1.0 \
-        --scheduler cos \
+        --scheduler "$SCHEDULER" \
         --warmup-steps "$WARMUP" \
         --iterations "$ITERATIONS" \
         --batch-size "$BATCH_SIZE" \
