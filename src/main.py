@@ -24,7 +24,6 @@ from evals import build_evaluators
 from models.utils import get_model
 from optim.base import train
 from optim.utils import build_scheduler
-from optim.optimization import get_optimizer
 
 from data.streaming_reader import StreamingDataReader
 
@@ -537,6 +536,8 @@ def main(args):
         from optim.memory_efficient.hybrid_lora import SignSGD
         opt = SignSGD(group_specs, lr=args.lr, momentum=args.beta1, weight_decay=args.weight_decay)
     else:
+        from optim.optimization import get_optimizer
+
         opt = get_optimizer(group_specs, args, model=model, qargs=args.qargs)  # Passes qargs, currently not implemented
 
     print(f"\nOptimizer:\n{opt}")
