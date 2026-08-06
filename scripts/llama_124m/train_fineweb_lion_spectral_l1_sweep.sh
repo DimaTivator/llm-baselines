@@ -4,6 +4,8 @@ set -euo pipefail
 DATASETS_DIR=${DATASETS_DIR:-"./datasets"}
 TOKENIZED_DATA_DIR=${TOKENIZED_DATA_DIR:-"./tokenized"}
 GPU=${GPU:-1}
+BATCH_SIZE=${BATCH_SIZE:-64}
+ACC_STEPS=${ACC_STEPS:-2}
 
 MODEL_SIZE="124m"
 OPT="lion-spectral-l1-reg"
@@ -37,9 +39,9 @@ for LR in "${LR_LIST[@]}"; do
         --n_embd "${N_EMBD}" \
         --n_head "${N_HEAD}" \
         --n_layer "${N_LAYER}" \
-        --batch_size 64 \
+        --batch_size "${BATCH_SIZE}" \
         --sequence_length 1024 \
-        --acc_steps 2 \
+        --acc_steps "${ACC_STEPS}" \
         --grad_clip 0.5 \
         --seed 0 \
         --weight_decay "${WD}" \
