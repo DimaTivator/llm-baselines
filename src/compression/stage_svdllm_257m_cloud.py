@@ -32,9 +32,10 @@ def main() -> None:
     checkpoints = sorted(
         args.destination.glob("llama257m_*/ckpts/latest/main.pt")
     )
+    checkpoint_bytes = sum(path.stat().st_size for path in checkpoints)
     print(f"STAGED_CHECKPOINTS={len(checkpoints)}", flush=True)
     usage = shutil.disk_usage(args.destination)
-    print(f"DESTINATION_BYTES={sum(path.stat().st_size for path in args.destination.rglob('*') if path.is_file())}", flush=True)
+    print(f"STAGED_CHECKPOINT_BYTES={checkpoint_bytes}", flush=True)
     print(f"FILESYSTEM_FREE_BYTES={usage.free}", flush=True)
     if args.inspect_only:
         return
