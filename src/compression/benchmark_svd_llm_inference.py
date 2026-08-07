@@ -345,7 +345,7 @@ def main() -> None:
         parser.error("--max_batch_size must be positive.")
 
     dtype = _dtype(args.dtype)
-    payload = {
+    new_payload = {
         "experiment": "dense vs SVD-LLM(auto) forward-pass speed",
         "device": str(device),
         "device_name": torch.cuda.get_device_name(device),
@@ -357,8 +357,27 @@ def main() -> None:
         "target_modules": args.target_modules,
         "checkpoints": [],
     }
+    if args.output.exists():
+        payload = json.loads(args.output.read_text())
+        print(
+            f"Resuming {args.output}: {len(payload['checkpoints'])} checkpoints complete",
+            flush=True,
+        )
+    else:
+        payload = new_payload
+    completed_checkpoints = {
+        row["checkpoint"] for row in payload["checkpoints"]
+    }
 
     for checkpoint_index, checkpoint in enumerate(args.checkpoints, start=1):
+        resolved_checkpoint = str(checkpoint.resolve())
+        if resolved_checkpoint in completed_checkpoints:
+            print(
+                f"[{checkpoint_index}/{len(args.checkpoints)}] "
+                f"already complete: {checkpoint}",
+                flush=True,
+            )
+            continue
         print(
             f"\n{'=' * 80}\n"
             f"[{checkpoint_index}/{len(args.checkpoints)}] {checkpoint}",
@@ -453,7 +472,7 @@ def main() -> None:
 
         payload["checkpoints"].append(
             {
-                "checkpoint": str(checkpoint.resolve()),
+                "checkpoint": resolved_checkpoint,
                 "sequence_length": sequence_length,
                 "original_parameters": original_params,
                 "compressed_parameters": compressed_params,

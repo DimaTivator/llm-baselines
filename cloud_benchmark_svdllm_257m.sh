@@ -21,7 +21,7 @@ PYTHONUNBUFFERED=1 python src/compression/benchmark_svd_llm_inference.py \
     --output "${OUTPUT_PATH}" >"${LOG_PATH}" 2>&1
 STATUS=$?
 
-if [ "${STATUS}" -eq 0 ]; then
+if [ -f "${OUTPUT_PATH}" ]; then
     python - "${OUTPUT_PATH}" "${HF_REPO_ID:-DimaTivator/spectral-wd-257m-checkpoints}" \
         >>"${LOG_PATH}" 2>&1 <<'PY'
 import sys
@@ -38,7 +38,7 @@ HfApi().upload_file(
 print("RESULT_UPLOADED=results/cloud-h100-inference-speed.json", flush=True)
 PY
     UPLOAD_STATUS=$?
-    if [ "${UPLOAD_STATUS}" -ne 0 ]; then
+    if [ "${STATUS}" -eq 0 ] && [ "${UPLOAD_STATUS}" -ne 0 ]; then
         STATUS=${UPLOAD_STATUS}
     fi
 fi
