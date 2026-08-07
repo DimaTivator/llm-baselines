@@ -27,8 +27,13 @@ export PYTHONUSERBASE=${PYTHONUSERBASE:-"/home/jovyan/.local"}
 export PATH="$PYTHONUSERBASE/bin:$PATH"
 export PYTHONUNBUFFERED=1
 
-python -c 'import datasets, huggingface_hub, numpy, tiktoken, torch, tqdm, transformers, wandb, zstandard'
-python -c 'from olmo_eval import HFTokenizer, ICLMetric, build_task; import cached_path, torchmetrics'
+echo "PREFLIGHT_STAGE=core_imports"
+timeout 180 python -c 'import datasets, huggingface_hub, numpy, tiktoken, torch, tqdm, transformers, wandb, zstandard' \
+    || { echo "Core dependency preflight failed or timed out" >&2; exit 1; }
+echo "PREFLIGHT_STAGE=downstream_imports"
+timeout 180 python -c 'from olmo_eval import HFTokenizer, ICLMetric, build_task; import cached_path, torchmetrics' \
+    || { echo "Downstream dependency preflight failed or timed out" >&2; exit 1; }
+echo "PREFLIGHT_STAGE=data_files"
 
 DATA_ROOT=${FINEWEBEDU_H200_ROOT:-"/home/jovyan/finewebedu_h200"}
 DATASETS_DIR="$DATA_ROOT/sample/100BT"
