@@ -7,11 +7,16 @@ DESTINATION=${CHECKPOINT_ROOT:-/workspace-SR006.nfs2/dimativator/spectral-wd-257
 LOG_DIR=${LOG_DIR:-/home/jovyan/logs}
 mkdir -p "${LOG_DIR}" "${DESTINATION}"
 LOG_PATH="${LOG_DIR}/stage-svdllm-257m-$(date +%F_%H%M%S).log"
+EXTRA_ARGS=()
+if [[ "${INSPECT_ONLY:-0}" == "1" ]]; then
+    EXTRA_ARGS+=(--inspect_only)
+fi
 
 set -o pipefail
 python src/compression/stage_svdllm_257m_cloud.py \
     --repo_id "${REPO_ID}" \
-    --destination "${DESTINATION}" 2>&1 | tee "${LOG_PATH}"
+    --destination "${DESTINATION}" \
+    "${EXTRA_ARGS[@]}" 2>&1 | tee "${LOG_PATH}"
 STATUS=${PIPESTATUS[0]}
 
 echo "EXIT=${STATUS}"
