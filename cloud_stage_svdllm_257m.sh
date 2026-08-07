@@ -8,10 +8,11 @@ LOG_DIR=${LOG_DIR:-/home/jovyan/logs}
 mkdir -p "${LOG_DIR}" "${DESTINATION}"
 LOG_PATH="${LOG_DIR}/stage-svdllm-257m-$(date +%F_%H%M%S).log"
 
+set -o pipefail
 python src/compression/stage_svdllm_257m_cloud.py \
     --repo_id "${REPO_ID}" \
-    --destination "${DESTINATION}" >"${LOG_PATH}" 2>&1
-STATUS=$?
+    --destination "${DESTINATION}" 2>&1 | tee "${LOG_PATH}"
+STATUS=${PIPESTATUS[0]}
 
 echo "EXIT=${STATUS}"
 echo "LOG=${LOG_PATH}"

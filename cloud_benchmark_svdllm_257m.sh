@@ -9,6 +9,7 @@ mkdir -p "${RESULT_DIR}" "${LOG_DIR}"
 LOG_PATH="${LOG_DIR}/benchmark-svdllm-257m-$(date +%F_%H%M%S).log"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
 
+set -o pipefail
 PYTHONUNBUFFERED=1 python src/compression/benchmark_svd_llm_inference.py \
     "${CHECKPOINT_ROOT}"/llama257m_*/ckpts/latest/main.pt \
     --device cuda:0 \
@@ -18,8 +19,8 @@ PYTHONUNBUFFERED=1 python src/compression/benchmark_svd_llm_inference.py \
     --warmup_steps 10 \
     --timed_steps 50 \
     --calibration_tokens "${CHECKPOINT_ROOT}/calibration/val.bin" \
-    --output "${OUTPUT_PATH}" >"${LOG_PATH}" 2>&1
-STATUS=$?
+    --output "${OUTPUT_PATH}" 2>&1 | tee "${LOG_PATH}"
+STATUS=${PIPESTATUS[0]}
 
 if [ -f "${OUTPUT_PATH}" ]; then
     python - "${OUTPUT_PATH}" "${HF_REPO_ID:-DimaTivator/spectral-wd-257m-checkpoints}" \
