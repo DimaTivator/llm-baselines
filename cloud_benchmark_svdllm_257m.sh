@@ -21,6 +21,28 @@ PYTHONUNBUFFERED=1 python src/compression/benchmark_svd_llm_inference.py \
     --output "${OUTPUT_PATH}" >"${LOG_PATH}" 2>&1
 STATUS=$?
 
+if [ "${STATUS}" -eq 0 ]; then
+    python - "${OUTPUT_PATH}" "${HF_REPO_ID:-DimaTivator/spectral-wd-257m-checkpoints}" \
+        >>"${LOG_PATH}" 2>&1 <<'PY'
+import sys
+
+from huggingface_hub import HfApi
+
+result_path, repo_id = sys.argv[1:]
+HfApi().upload_file(
+    path_or_fileobj=result_path,
+    path_in_repo="results/cloud-h100-inference-speed.json",
+    repo_id=repo_id,
+    repo_type="dataset",
+)
+print("RESULT_UPLOADED=results/cloud-h100-inference-speed.json", flush=True)
+PY
+    UPLOAD_STATUS=$?
+    if [ "${UPLOAD_STATUS}" -ne 0 ]; then
+        STATUS=${UPLOAD_STATUS}
+    fi
+fi
+
 echo "EXIT=${STATUS}"
 echo "LOG=${LOG_PATH}"
 echo "RESULT=${OUTPUT_PATH}"
