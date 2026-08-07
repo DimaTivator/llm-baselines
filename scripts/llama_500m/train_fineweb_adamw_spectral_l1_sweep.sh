@@ -78,6 +78,9 @@ EVAL_BATCHES=${EVAL_BATCHES:-64}
 EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-32}
 EVAL_INTERVAL=${EVAL_INTERVAL:-281}
 LOG_INTERVAL=${LOG_INTERVAL:-4}
+LATEST_CKPT_INTERVAL=${LATEST_CKPT_INTERVAL:-0}
+PERMANENT_CKPT_INTERVAL=${PERMANENT_CKPT_INTERVAL:-0}
+ROLLING_LOCAL_CHECKPOINT_ONLY=${ROLLING_LOCAL_CHECKPOINT_ONLY:-0}
 FINEWEBEDU_MAX_FILES=${FINEWEBEDU_MAX_FILES:-5}
 EFFECTIVE_RANK_INTERVAL=${EFFECTIVE_RANK_INTERVAL:-500}
 DOWNSTREAM_EVAL_INTERVAL=${DOWNSTREAM_EVAL_INTERVAL:-4000}
@@ -101,6 +104,7 @@ read -r -a SPECTRAL_L1_COEF_VALUES <<< "${SPECTRAL_L1_COEF_INPUT//:/ }"
 
 SVT_EVERY=0
 ERANK_TAG=$([ "$EFFECTIVE_RANK_INTERVAL" -gt 0 ] && echo "_erank" || echo "")
+PREVIOUS_EXP_NAME=""
 
 EXTRA_ARGS=()
 if [ "$DOWNSTREAM_EVAL_ENABLED" = "1" ]; then
@@ -114,6 +118,15 @@ for SPECTRAL_L1_COEF_START in "${SPECTRAL_L1_COEF_VALUES[@]}"; do
     EXP_NAME="llama${MODEL_SIZE}_${OPT}_wd${WD}_lr${LR}_sl1_${SPECTRAL_L1_COEF_START}_${DATASET}${ERANK_TAG}"
     if [ -n "$EXPERIMENT_PREFIX" ]; then
         EXP_NAME="${EXPERIMENT_PREFIX}_${EXP_NAME}"
+    fi
+    if [ "$ROLLING_LOCAL_CHECKPOINT_ONLY" = "1" ] && [ -n "$PREVIOUS_EXP_NAME" ]; then
+        PREVIOUS_CKPT_DIR="${RESULTS_BASE_FOLDER}/${PREVIOUS_EXP_NAME}/ckpts"
+        if [[ "$PREVIOUS_CKPT_DIR" != "${RESULTS_BASE_FOLDER}/"*/ckpts ]]; then
+            echo "Refusing to remove unexpected checkpoint path: $PREVIOUS_CKPT_DIR"
+            exit 1
+        fi
+        echo "Removing previous rolling checkpoint: $PREVIOUS_CKPT_DIR"
+        rm -rf -- "$PREVIOUS_CKPT_DIR"
     fi
     HF_CHECKPOINT_PATH="${HF_CHECKPOINT_PREFIX}/${EXP_NAME}/ckpts/latest/main.pt"
     echo "=== spectral_l1_reg_coef=${SPECTRAL_L1_COEF_START}  exp=${EXP_NAME} ==="
@@ -146,8 +159,8 @@ for SPECTRAL_L1_COEF_START in "${SPECTRAL_L1_COEF_VALUES[@]}"; do
         --eval_batches "${EVAL_BATCHES}" \
         --eval_batch_size "${EVAL_BATCH_SIZE}" \
         --eval_interval "${EVAL_INTERVAL}" \
-        --latest_ckpt_interval 0 \
-        --permanent_ckpt_interval 0 \
+        --latest_ckpt_interval "${LATEST_CKPT_INTERVAL}" \
+        --permanent_ckpt_interval "${PERMANENT_CKPT_INTERVAL}" \
         --log_interval "${LOG_INTERVAL}" \
         --finewebedu_max_files "${FINEWEBEDU_MAX_FILES}" \
         --tokenized_data_dir "${TOKENIZED_DATA_DIR}" \
@@ -158,4 +171,5 @@ for SPECTRAL_L1_COEF_START in "${SPECTRAL_L1_COEF_VALUES[@]}"; do
         --hf_checkpoint_path "${HF_CHECKPOINT_PATH}" \
         "${DISTRIBUTED_ARGS[@]}" \
         "${EXTRA_ARGS[@]}" || exit 1
+    PREVIOUS_EXP_NAME="$EXP_NAME"
 done
