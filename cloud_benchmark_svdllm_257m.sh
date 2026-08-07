@@ -5,11 +5,22 @@ set -u
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/workspace-SR006.nfs2/dimativator/spectral-wd-257m}
 RESULT_DIR=${RESULT_DIR:-/home/jovyan/results/svdllm-inference-257m}
 LOG_DIR=${LOG_DIR:-/home/jovyan/logs}
+HF_REPO_ID=${HF_REPO_ID:-DimaTivator/spectral-wd-257m-checkpoints}
 mkdir -p "${RESULT_DIR}" "${LOG_DIR}"
 LOG_PATH="${LOG_DIR}/benchmark-svdllm-257m-$(date +%F_%H%M%S).log"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
 shopt -s nullglob
 CHECKPOINTS=("${CHECKPOINT_ROOT}"/llama257m_*/ckpts/latest/main.pt)
+if [[ "${#CHECKPOINTS[@]}" -ne 17 && "${AUTO_STAGE:-1}" == "1" ]]; then
+    echo "Found ${#CHECKPOINTS[@]}/17 checkpoints; resuming staging from ${HF_REPO_ID}"
+    if ! python src/compression/stage_svdllm_257m_cloud.py \
+        --repo_id "${HF_REPO_ID}" \
+        --destination "${CHECKPOINT_ROOT}"; then
+        echo "Checkpoint staging failed" >&2
+        exit 2
+    fi
+    CHECKPOINTS=("${CHECKPOINT_ROOT}"/llama257m_*/ckpts/latest/main.pt)
+fi
 if [[ "${#CHECKPOINTS[@]}" -ne 17 ]]; then
     echo "Expected 17 staged checkpoints, found ${#CHECKPOINTS[@]}" >&2
     exit 2
@@ -29,7 +40,7 @@ PYTHONUNBUFFERED=1 python src/compression/benchmark_svd_llm_inference.py \
 STATUS=${PIPESTATUS[0]}
 
 if [ -f "${OUTPUT_PATH}" ]; then
-    python - "${OUTPUT_PATH}" "${HF_REPO_ID:-DimaTivator/spectral-wd-257m-checkpoints}" \
+    python - "${OUTPUT_PATH}" "${HF_REPO_ID}" \
         >>"${LOG_PATH}" 2>&1 <<'PY'
 import sys
 
