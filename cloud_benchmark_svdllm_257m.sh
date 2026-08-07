@@ -8,10 +8,16 @@ LOG_DIR=${LOG_DIR:-/home/jovyan/logs}
 mkdir -p "${RESULT_DIR}" "${LOG_DIR}"
 LOG_PATH="${LOG_DIR}/benchmark-svdllm-257m-$(date +%F_%H%M%S).log"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
+shopt -s nullglob
+CHECKPOINTS=("${CHECKPOINT_ROOT}"/llama257m_*/ckpts/latest/main.pt)
+if [[ "${#CHECKPOINTS[@]}" -ne 17 ]]; then
+    echo "Expected 17 staged checkpoints, found ${#CHECKPOINTS[@]}" >&2
+    exit 2
+fi
 
 set -o pipefail
 PYTHONUNBUFFERED=1 python src/compression/benchmark_svd_llm_inference.py \
-    "${CHECKPOINT_ROOT}"/llama257m_*/ckpts/latest/main.pt \
+    "${CHECKPOINTS[@]}" \
     --device cuda:0 \
     --dtype bfloat16 \
     --calib_batches 16 \
