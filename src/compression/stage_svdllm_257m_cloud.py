@@ -20,6 +20,7 @@ def main() -> None:
         repo_id=args.repo_id,
         repo_type="dataset",
         local_dir=args.destination,
+        cache_dir=args.destination.parent / ".hf-cache",
     )
     checkpoints = sorted(
         args.destination.glob("llama257m_*/ckpts/latest/main.pt")
