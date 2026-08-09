@@ -81,8 +81,13 @@ def _load_model(
     print(f"Building model ({config.model}) ...", flush=True)
     model = get_model(config).to(device)
     print("Loading checkpoint weights ...", flush=True)
-    state = torch.load(checkpoint, map_location=device, weights_only=False)
+    # Training checkpoints also contain optimizer state. Loading the complete
+    # artifact on CUDA retains several GiB per checkpoint even though inference
+    # only needs the model weights.
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
     model.load_state_dict(state["model"])
+    del state
+    gc.collect()
     model.eval()
     return model, config
 
