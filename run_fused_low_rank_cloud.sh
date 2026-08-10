@@ -15,7 +15,30 @@ if [[ "${1:-}" == "cpu-smoke" ]]; then
       src/models/compress.py \
       src/compression/svd_llm.py \
       src/compression/benchmark_fused_low_rank.py
-    PYTHONPATH=src python -m pytest -q tests/test_fused_low_rank.py
+    PYTHONPATH=src python - <<'PY'
+import torch
+import torch.nn.functional as F
+
+from models.compress import LowRankLinear
+from models.fused_low_rank import fused_low_rank_linear
+
+x = torch.randn(3, 8)
+b_weight = torch.randn(4, 8)
+a_weight = torch.randn(12, 4)
+bias = torch.randn(12)
+expected = F.linear(F.linear(x, b_weight), a_weight, bias)
+actual = fused_low_rank_linear(x, b_weight, a_weight, bias)
+torch.testing.assert_close(actual, expected)
+
+try:
+    LowRankLinear(8, 12, 4, kernel="unknown")
+except ValueError:
+    pass
+else:
+    raise AssertionError("LowRankLinear accepted an unknown kernel")
+
+print("CPU fallback correctness: OK")
+PY
     echo "CPU_SMOKE_EXIT=$?"
   } 2>&1 | tee "$LOG_PATH"
   exit 0
