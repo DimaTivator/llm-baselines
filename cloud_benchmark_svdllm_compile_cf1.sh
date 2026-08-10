@@ -35,6 +35,7 @@ set -o pipefail
         --device cuda:0 \
         --dtype bfloat16 \
         --compile_mode "${COMPILE_MODE}" \
+        --disable_inductor_pattern_matcher \
         --calib_batches 16 \
         --calib_batch_size 8 \
         --warmup_steps 10 \

@@ -346,6 +346,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--disable_inductor_pattern_matcher",
+        action="store_true",
+        help=(
+            "Disable TorchInductor graph pattern rewrites. This works around a "
+            "PyTorch 2.1 joint-graph compiler bug for consecutive low-rank linears."
+        ),
+    )
+    parser.add_argument(
         "--target_modules",
         nargs="+",
         default=list(TARGET_MODULES),
@@ -401,6 +409,11 @@ def main() -> None:
             f"{torch._dynamo.config.cache_size_limit}",
             flush=True,
         )
+        if args.disable_inductor_pattern_matcher:
+            import torch._inductor.config as inductor_config
+
+            inductor_config.pattern_matcher = False
+            print("TorchInductor pattern matcher: disabled", flush=True)
 
     dtype = _dtype(args.dtype)
     new_payload = {
@@ -415,6 +428,7 @@ def main() -> None:
         "timed_steps": args.timed_steps,
         "compile_mode": args.compile_mode,
         "compile_cache_size_limit": args.compile_cache_size_limit,
+        "inductor_pattern_matcher": not args.disable_inductor_pattern_matcher,
         "torch_version": torch.__version__,
         "target_modules": args.target_modules,
         "checkpoints": [],
