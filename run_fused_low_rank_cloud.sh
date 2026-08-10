@@ -44,6 +44,32 @@ PY
   exit 0
 fi
 
+if [[ "${1:-}" == "report-results" ]]; then
+  python - <<'PY'
+import json
+from pathlib import Path
+
+result_dir = Path("/home/jovyan/results/fused-low-rank-cf1")
+for path in sorted(result_dir.glob("*.json")):
+    payload = json.loads(path.read_text())
+    print(f"=== {path.name} ===")
+    print(json.dumps(payload.get("aggregates", []), indent=2))
+
+process_log = result_dir / "gpu-processes.csv"
+process_rows = []
+if process_log.exists():
+    for line in process_log.read_text().splitlines():
+        if line and not line[0].isdigit():
+            process_rows.append(line)
+        elif "," in line:
+            process_rows.append(line)
+print("=== unique GPU process rows ===")
+for row in sorted(set(process_rows)):
+    print(row)
+PY
+  exit 0
+fi
+
 monitor_gpu_processes() {
   local benchmark_pid=$1
   while kill -0 "$benchmark_pid" 2>/dev/null; do
@@ -61,6 +87,8 @@ monitor_gpu_processes() {
   nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
   echo "=== benchmark ==="
 } 2>&1 | tee "$LOG_PATH"
+
+: > "$GPU_PROCESS_LOG"
 
 PYTHONPATH=src python src/compression/benchmark_fused_low_rank.py \
   --warmup_steps 10 \
