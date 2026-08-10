@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
@@ -14,6 +14,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo_id", required=True)
     parser.add_argument("--destination", required=True, type=Path)
+    parser.add_argument("--expected_checkpoints", default=17, type=int)
+    parser.add_argument(
+        "--allow_patterns",
+        nargs="+",
+        default=None,
+        help="Optional Hugging Face snapshot patterns for a partial download.",
+    )
     parser.add_argument(
         "--inspect_only",
         action="store_true",
@@ -28,6 +35,7 @@ def main() -> None:
             repo_type="dataset",
             local_dir=args.destination,
             cache_dir=args.destination.parent / ".hf-cache",
+            allow_patterns=args.allow_patterns,
         )
     checkpoints = sorted(
         args.destination.glob("llama257m_*/ckpts/latest/main.pt")
@@ -39,8 +47,10 @@ def main() -> None:
     print(f"FILESYSTEM_FREE_BYTES={usage.free}", flush=True)
     if args.inspect_only:
         return
-    if len(checkpoints) != 17:
-        raise RuntimeError(f"Expected 17 checkpoints, found {len(checkpoints)}")
+    if len(checkpoints) != args.expected_checkpoints:
+        raise RuntimeError(
+            f"Expected {args.expected_checkpoints} checkpoints, found {len(checkpoints)}"
+        )
     calibration = args.destination / "calibration" / "val.bin"
     if not calibration.exists():
         raise FileNotFoundError(calibration)

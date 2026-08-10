@@ -39,6 +39,13 @@ from models.utils import get_model
 
 
 TARGET_MODULES = ("c_attn", "c_proj", "w1", "w2")
+COMPILE_MODES = (
+    "none",
+    "default",
+    "reduce-overhead",
+    "max-autotune",
+    "max-autotune-no-cudagraphs",
+)
 
 
 def _autocast(dtype: torch.dtype):
@@ -61,6 +68,22 @@ def _clear_cuda() -> None:
 
 def _parameter_count(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters())
+
+
+def _compile_model(model: nn.Module, mode: str) -> nn.Module:
+    if mode == "none":
+        return model
+    kwargs = {
+        "backend": "inductor",
+        "dynamic": False,
+    }
+    if mode != "default":
+        kwargs["mode"] = mode
+    print(
+        f"Compiling with torch.compile(mode={mode}, dynamic=False) ...",
+        flush=True,
+    )
+    return torch.compile(model, **kwargs)
 
 
 def _load_model(
@@ -308,6 +331,12 @@ def main() -> None:
     parser.add_argument("--timed_steps", default=20, type=int)
     parser.add_argument("--max_batch_size", default=None, type=int)
     parser.add_argument(
+        "--compile_mode",
+        choices=COMPILE_MODES,
+        default="none",
+        help="Compile dense and compressed models separately with TorchInductor.",
+    )
+    parser.add_argument(
         "--target_modules",
         nargs="+",
         default=list(TARGET_MODULES),
@@ -359,6 +388,8 @@ def main() -> None:
         "calib_batch_size": args.calib_batch_size,
         "warmup_steps": args.warmup_steps,
         "timed_steps": args.timed_steps,
+        "compile_mode": args.compile_mode,
+        "torch_version": torch.__version__,
         "target_modules": args.target_modules,
         "checkpoints": [],
     }
@@ -398,8 +429,9 @@ def main() -> None:
 
         original_params = _parameter_count(model)
         print(f"\nBenchmarking original model ({original_params / 1e6:.2f}M params) ...")
+        compiled_model = _compile_model(model, args.compile_mode)
         original_rows = _benchmark_model(
-            model,
+            compiled_model,
             "original",
             config,
             device,
@@ -409,6 +441,11 @@ def main() -> None:
             dtype,
             args.max_batch_size,
         )
+        model_was_compiled = compiled_model is not model
+        del compiled_model
+        if model_was_compiled:
+            torch._dynamo.reset()
+            _clear_cuda()
 
         print(
             f"\nCollecting SVD-LLM calibration statistics "
@@ -455,8 +492,9 @@ def main() -> None:
             f"{original_params / compressed_params:.3f}x parameter compression) ...",
             flush=True,
         )
+        compiled_model = _compile_model(model, args.compile_mode)
         compressed_rows = _benchmark_model(
-            model,
+            compiled_model,
             "compressed",
             config,
             device,
@@ -466,6 +504,11 @@ def main() -> None:
             dtype,
             args.max_batch_size,
         )
+        model_was_compiled = compiled_model is not model
+        del compiled_model
+        if model_was_compiled:
+            torch._dynamo.reset()
+            _clear_cuda()
 
         comparisons = _comparison_rows(original_rows, compressed_rows)
         print("\nCommon-batch speedups:", flush=True)
