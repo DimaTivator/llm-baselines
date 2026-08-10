@@ -22,6 +22,100 @@ except ImportError:
 if triton is not None:
 
     @triton.jit
+    def _persistent_fused_low_rank_kernel(
+        x_ptr,
+        b_ptr,
+        a_ptr,
+        bias_ptr,
+        output_ptr,
+        m_size,
+        n_size,
+        k_size,
+        rank_size,
+        stride_xm,
+        stride_xk,
+        stride_br,
+        stride_bk,
+        stride_an,
+        stride_ar,
+        stride_om,
+        stride_on,
+        HAS_BIAS: tl.constexpr,
+        USE_BF16: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+        PADDED_RANK: tl.constexpr,
+    ):
+        """Compute the rank intermediate once, then consume all output tiles."""
+        pid_m = tl.program_id(axis=0)
+        offsets_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        offsets_r = tl.arange(0, PADDED_RANK)
+        intermediate = tl.zeros((BLOCK_M, PADDED_RANK), dtype=tl.float32)
+
+        for k_block in range(0, tl.cdiv(k_size, BLOCK_K)):
+            offsets_k = k_block * BLOCK_K + tl.arange(0, BLOCK_K)
+            x = tl.load(
+                x_ptr
+                + offsets_m[:, None] * stride_xm
+                + offsets_k[None, :] * stride_xk,
+                mask=(offsets_m[:, None] < m_size)
+                & (offsets_k[None, :] < k_size),
+                other=0.0,
+            )
+            b = tl.load(
+                b_ptr
+                + offsets_r[:, None] * stride_br
+                + offsets_k[None, :] * stride_bk,
+                mask=(offsets_r[:, None] < rank_size)
+                & (offsets_k[None, :] < k_size),
+                other=0.0,
+            )
+            if USE_BF16:
+                x = x.to(tl.bfloat16)
+                b = b.to(tl.bfloat16)
+            else:
+                x = x.to(tl.float16)
+                b = b.to(tl.float16)
+            intermediate += tl.dot(x, tl.trans(b))
+
+        if USE_BF16:
+            intermediate = intermediate.to(tl.bfloat16)
+        else:
+            intermediate = intermediate.to(tl.float16)
+
+        for n_block in range(0, tl.cdiv(n_size, BLOCK_N)):
+            offsets_n = n_block * BLOCK_N + tl.arange(0, BLOCK_N)
+            a = tl.load(
+                a_ptr
+                + offsets_n[:, None] * stride_an
+                + offsets_r[None, :] * stride_ar,
+                mask=(offsets_n[:, None] < n_size)
+                & (offsets_r[None, :] < rank_size),
+                other=0.0,
+            )
+            if USE_BF16:
+                a = a.to(tl.bfloat16)
+            else:
+                a = a.to(tl.float16)
+            accumulator = tl.dot(intermediate, tl.trans(a))
+            if HAS_BIAS:
+                bias = tl.load(
+                    bias_ptr + offsets_n,
+                    mask=offsets_n < n_size,
+                    other=0.0,
+                )
+                accumulator += bias[None, :]
+            tl.store(
+                output_ptr
+                + offsets_m[:, None] * stride_om
+                + offsets_n[None, :] * stride_on,
+                accumulator,
+                mask=(offsets_m[:, None] < m_size)
+                & (offsets_n[None, :] < n_size),
+            )
+
+    @triton.jit
     def _fused_low_rank_kernel(
         x_ptr,
         b_ptr,
@@ -201,15 +295,11 @@ def fused_low_rank_linear(
     )
 
     block_m = 16
-    block_n = 128 if m_size <= 64 else 64
+    block_n = 64
     block_k = 32
     block_r = 32
-    grid = (
-        triton.cdiv(m_size, block_m),
-        triton.cdiv(n_size, block_n),
-    )
     bias_ptr = bias if bias is not None else a_weight
-    _fused_low_rank_kernel[grid](
+    common_args = (
         input_2d,
         b_weight,
         a_weight,
@@ -227,13 +317,35 @@ def fused_low_rank_linear(
         a_weight.stride(1),
         output.stride(0),
         output.stride(1),
-        HAS_BIAS=bias is not None,
-        USE_BF16=compute_dtype == torch.bfloat16,
-        BLOCK_M=block_m,
-        BLOCK_N=block_n,
-        BLOCK_K=block_k,
-        BLOCK_R=block_r,
-        num_warps=4,
-        num_stages=3,
     )
+    if rank_size <= 1024:
+        padded_rank = max(16, triton.next_power_of_2(rank_size))
+        grid = (triton.cdiv(m_size, block_m),)
+        _persistent_fused_low_rank_kernel[grid](
+            *common_args,
+            HAS_BIAS=bias is not None,
+            USE_BF16=compute_dtype == torch.bfloat16,
+            BLOCK_M=block_m,
+            BLOCK_N=block_n,
+            BLOCK_K=block_k,
+            PADDED_RANK=padded_rank,
+            num_warps=8 if padded_rank >= 256 else 4,
+            num_stages=3,
+        )
+    else:
+        grid = (
+            triton.cdiv(m_size, block_m),
+            triton.cdiv(n_size, block_n),
+        )
+        _fused_low_rank_kernel[grid](
+            *common_args,
+            HAS_BIAS=bias is not None,
+            USE_BF16=compute_dtype == torch.bfloat16,
+            BLOCK_M=block_m,
+            BLOCK_N=block_n,
+            BLOCK_K=block_k,
+            BLOCK_R=block_r,
+            num_warps=4,
+            num_stages=3,
+        )
     return output.view(*x.shape[:-1], n_size)
