@@ -10,15 +10,34 @@ class LowRankLinear(nn.Module):
         B: (rank, in_features)   — weight = Vh_r
     """
 
-    def __init__(self, in_features: int, out_features: int, rank: int, bias=None):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        rank: int,
+        bias=None,
+        kernel: str = "torch",
+    ):
         super().__init__()
+        if kernel not in ("torch", "triton"):
+            raise ValueError(f"Unknown low-rank kernel: {kernel}")
         self.B = nn.Linear(in_features, rank, bias=False)
         self.A = nn.Linear(rank, out_features, bias=bias is not None)
+        self.kernel = kernel
         if bias is not None:
             with torch.no_grad():
                 self.A.bias.copy_(bias)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.kernel == "triton":
+            from models.fused_low_rank import fused_low_rank_linear
+
+            return fused_low_rank_linear(
+                x,
+                self.B.weight,
+                self.A.weight,
+                self.A.bias,
+            )
         return self.A(self.B(x))
 
 

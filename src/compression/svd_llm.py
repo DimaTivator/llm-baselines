@@ -78,6 +78,7 @@ def apply_svd_llm(
     target_modules=("q_proj", "v_proj"),
     device: str = "cpu",
     margin: int = 0,
+    low_rank_kernel: str = "torch",
 ) -> tuple[torch.nn.Module, dict]:
     """SVD-LLM: whitening-aware SVD compression, applied in-place.
 
@@ -95,6 +96,8 @@ def apply_svd_llm(
         margin: only used with ``rank="auto"``; retained rank becomes
             ``round(effective_rank(W)) + margin`` (may be negative to compress
             more aggressively than the bare effective rank).
+        low_rank_kernel: ``"torch"`` for two ``Linear`` calls or ``"triton"``
+            for the inference-only fused prototype with an automatic fallback.
 
     Returns:
         ``(model, comp_info)`` where ``comp_info`` maps each compressed layer
@@ -148,7 +151,13 @@ def apply_svd_llm(
                 B_weight = B_weight @ inv_sqrt_cov
 
             bias = module.bias.data if module.bias is not None else None
-            low_rank = LowRankLinear(in_f, out_f, r, bias=bias).to(W.device)
+            low_rank = LowRankLinear(
+                in_f,
+                out_f,
+                r,
+                bias=bias,
+                kernel=low_rank_kernel,
+            ).to(W.device)
             with torch.no_grad():
                 low_rank.A.weight.copy_(A_weight.to(module.weight.dtype))
                 low_rank.B.weight.copy_(B_weight.to(module.weight.dtype))

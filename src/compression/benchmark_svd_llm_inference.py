@@ -139,7 +139,10 @@ def _calibration_data(
 
 
 @torch.inference_mode()
-def _verify_low_rank_order(model: nn.Module) -> dict[str, float | int | str]:
+def _verify_low_rank_order(
+    model: nn.Module,
+    dtype: torch.dtype,
+) -> dict[str, float | int | str | list[str]]:
     """Assert that every low-rank layer evaluates B first and A second.
 
     SVD-LLM stores the (possibly inverse-whitened) right factor in ``B`` and
@@ -148,6 +151,7 @@ def _verify_low_rank_order(model: nn.Module) -> dict[str, float | int | str]:
     """
     checked = 0
     max_abs_error = 0.0
+    kernels: set[str] = set()
 
     for name, module in model.named_modules():
         if not isinstance(module, LowRankLinear):
@@ -162,18 +166,23 @@ def _verify_low_rank_order(model: nn.Module) -> dict[str, float | int | str]:
             device=module.B.weight.device,
             dtype=module.B.weight.dtype,
         )
-        actual = module(probe)
+        with _autocast(dtype):
+            actual = module(probe)
         b_hook.remove()
         a_hook.remove()
 
-        if events != ["B", "A"]:
-            raise AssertionError(f"{name} executed factors in order {events}, expected ['B', 'A']")
+        expected_events = ["B", "A"] if module.kernel == "torch" else []
+        if events != expected_events:
+            raise AssertionError(
+                f"{name} executed module events {events}, expected {expected_events}"
+            )
 
-        expected = F.linear(
-            F.linear(probe, module.B.weight),
-            module.A.weight,
-            module.A.bias,
-        )
+        with _autocast(dtype):
+            expected = F.linear(
+                F.linear(probe, module.B.weight),
+                module.A.weight,
+                module.A.bias,
+            )
         error = float((actual - expected).abs().max().item())
         tolerance = 1e-4 if actual.dtype == torch.float32 else 5e-2
         if error > tolerance:
@@ -182,6 +191,7 @@ def _verify_low_rank_order(model: nn.Module) -> dict[str, float | int | str]:
             )
         max_abs_error = max(max_abs_error, error)
         checked += 1
+        kernels.add(module.kernel)
 
     if checked == 0:
         raise AssertionError("SVD-LLM did not create any LowRankLinear modules")
@@ -191,6 +201,7 @@ def _verify_low_rank_order(model: nn.Module) -> dict[str, float | int | str]:
         "factor_order": "B_then_A",
         "expression": "A(B(input)); unwhitened: U * (S * (V^T * input))",
         "max_abs_error": max_abs_error,
+        "kernels": sorted(kernels),
     }
 
 
@@ -359,6 +370,12 @@ def main() -> None:
         default=list(TARGET_MODULES),
     )
     parser.add_argument(
+        "--low_rank_kernel",
+        choices=("torch", "triton"),
+        default="torch",
+        help="Implementation used by compressed Linear factors.",
+    )
+    parser.add_argument(
         "--dtype",
         choices=("bfloat16", "float16", "float32"),
         default="bfloat16",
@@ -431,6 +448,7 @@ def main() -> None:
         "inductor_pattern_matcher": not args.disable_inductor_pattern_matcher,
         "torch_version": torch.__version__,
         "target_modules": args.target_modules,
+        "low_rank_kernel": args.low_rank_kernel,
         "checkpoints": [],
     }
     if args.output.exists():
@@ -514,12 +532,13 @@ def main() -> None:
             whitening_stats=whitening_stats,
             target_modules=tuple(args.target_modules),
             device=str(device),
+            low_rank_kernel=args.low_rank_kernel,
         )
         del whitening_stats
         _clear_cuda()
         model.eval()
 
-        order_check = _verify_low_rank_order(model)
+        order_check = _verify_low_rank_order(model, dtype)
         print(
             f"Verified {order_check['layers_checked']} low-rank layers execute "
             "the right factor B before A(U*S); unwhitened order is "
