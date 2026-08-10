@@ -66,6 +66,7 @@ PYTHONPATH=src python src/compression/benchmark_fused_low_rank.py \
   --warmup_steps 10 \
   --timed_steps 50 \
   --output "$RESULT_PATH" \
+  "$@" \
   > >(tee -a "$LOG_PATH") 2>&1 &
 BENCHMARK_PID=$!
 monitor_gpu_processes "$BENCHMARK_PID" &
