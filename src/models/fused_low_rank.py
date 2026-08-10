@@ -295,7 +295,7 @@ def fused_low_rank_linear(
     )
 
     block_m = 16
-    block_n = 64
+    block_n = 32
     block_k = 32
     block_r = 32
     bias_ptr = bias if bias is not None else a_weight
@@ -330,7 +330,7 @@ def fused_low_rank_linear(
             BLOCK_K=block_k,
             PADDED_RANK=padded_rank,
             num_warps=8 if padded_rank >= 256 else 4,
-            num_stages=3,
+            num_stages=1,
         )
     else:
         grid = (
