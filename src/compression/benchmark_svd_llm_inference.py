@@ -204,7 +204,7 @@ def _time_batch(
 ) -> tuple[float, int]:
     with _autocast(dtype):
         for _ in range(warmup_steps):
-            model(input_ids)
+            model(input_ids, get_logits=True)["logits"]
     torch.cuda.synchronize(input_ids.device)
 
     torch.cuda.reset_peak_memory_stats(input_ids.device)
@@ -213,7 +213,7 @@ def _time_batch(
     start.record()
     with _autocast(dtype):
         for _ in range(timed_steps):
-            model(input_ids)
+            model(input_ids, get_logits=True)["logits"]
     end.record()
     end.synchronize()
 
@@ -405,6 +405,7 @@ def main() -> None:
     dtype = _dtype(args.dtype)
     new_payload = {
         "experiment": "dense vs SVD-LLM(auto) forward-pass speed",
+        "forward_output": "last-token logits",
         "device": str(device),
         "device_name": torch.cuda.get_device_name(device),
         "dtype": args.dtype,
