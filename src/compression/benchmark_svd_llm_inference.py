@@ -337,6 +337,15 @@ def main() -> None:
         help="Compile dense and compressed models separately with TorchInductor.",
     )
     parser.add_argument(
+        "--compile_cache_size_limit",
+        default=64,
+        type=int,
+        help=(
+            "Maximum number of static TorchDynamo graph variants. The batch-size "
+            "sweep needs more than the PyTorch 2.1 default of 8."
+        ),
+    )
+    parser.add_argument(
         "--target_modules",
         nargs="+",
         default=list(TARGET_MODULES),
@@ -377,6 +386,21 @@ def main() -> None:
         parser.error("Warmup and timed step counts must be positive.")
     if args.max_batch_size is not None and args.max_batch_size < 1:
         parser.error("--max_batch_size must be positive.")
+    if args.compile_cache_size_limit < 1:
+        parser.error("--compile_cache_size_limit must be positive.")
+
+    if args.compile_mode != "none":
+        torch._dynamo.config.cache_size_limit = args.compile_cache_size_limit
+        if hasattr(torch._dynamo.config, "accumulated_cache_size_limit"):
+            torch._dynamo.config.accumulated_cache_size_limit = max(
+                torch._dynamo.config.accumulated_cache_size_limit,
+                args.compile_cache_size_limit,
+            )
+        print(
+            "TorchDynamo static graph cache limit: "
+            f"{torch._dynamo.config.cache_size_limit}",
+            flush=True,
+        )
 
     dtype = _dtype(args.dtype)
     new_payload = {
@@ -389,6 +413,7 @@ def main() -> None:
         "warmup_steps": args.warmup_steps,
         "timed_steps": args.timed_steps,
         "compile_mode": args.compile_mode,
+        "compile_cache_size_limit": args.compile_cache_size_limit,
         "torch_version": torch.__version__,
         "target_modules": args.target_modules,
         "checkpoints": [],
