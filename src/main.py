@@ -560,6 +560,10 @@ def main(args, parser):
     else:
         scheduler = None
 
+    # Keep all ranks on the same side of the auto-resume decision. Without
+    # this barrier, a faster rank can enter training and create the iteration-0
+    # checkpoint while another rank is still checking whether it should resume.
+    distributed_backend.barrier()
     if (exp_dir / "ckpts" / "latest" / "main.pt").exists():
         if not args.auto_resume:
             raise ValueError(
@@ -572,6 +576,7 @@ def main(args, parser):
             args.resume_from = str(exp_dir / "ckpts" / "latest")
     elif distributed_backend.is_master_process():
         exp_dir.mkdir(parents=True, exist_ok=True)
+    distributed_backend.barrier()
 
     stats = train(
         model=model,
