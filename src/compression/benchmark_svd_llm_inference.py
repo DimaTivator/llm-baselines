@@ -376,6 +376,15 @@ def main() -> None:
         help="Implementation used by compressed Linear factors.",
     )
     parser.add_argument(
+        "--auto_rank_multiple",
+        default=None,
+        type=int,
+        help=(
+            "Floor rank=auto to this multiple, clamping a zero result to 16. "
+            "Must be a multiple of 16 for BF16 tensor-core-aligned factors."
+        ),
+    )
+    parser.add_argument(
         "--dtype",
         choices=("bfloat16", "float16", "float32"),
         default="bfloat16",
@@ -413,6 +422,10 @@ def main() -> None:
         parser.error("--max_batch_size must be positive.")
     if args.compile_cache_size_limit < 1:
         parser.error("--compile_cache_size_limit must be positive.")
+    if args.auto_rank_multiple is not None and (
+        args.auto_rank_multiple < 16 or args.auto_rank_multiple % 16 != 0
+    ):
+        parser.error("--auto_rank_multiple must be a positive multiple of 16.")
 
     if args.compile_mode != "none":
         torch._dynamo.config.cache_size_limit = args.compile_cache_size_limit
@@ -449,6 +462,7 @@ def main() -> None:
         "torch_version": torch.__version__,
         "target_modules": args.target_modules,
         "low_rank_kernel": args.low_rank_kernel,
+        "auto_rank_multiple": args.auto_rank_multiple,
         "checkpoints": [],
     }
     if args.output.exists():
@@ -533,7 +547,24 @@ def main() -> None:
             target_modules=tuple(args.target_modules),
             device=str(device),
             low_rank_kernel=args.low_rank_kernel,
+            auto_rank_multiple=args.auto_rank_multiple,
         )
+        if args.auto_rank_multiple is not None:
+            misaligned = {
+                name: rank
+                for name, rank in compression_info.items()
+                if rank % 16 != 0
+            }
+            if misaligned:
+                raise AssertionError(
+                    "Found ranks not divisible by 16: "
+                    f"{misaligned}"
+                )
+            print(
+                f"Verified all {len(compression_info)} retained ranks are "
+                "multiples of 16.",
+                flush=True,
+            )
         del whitening_stats
         _clear_cuda()
         model.eval()

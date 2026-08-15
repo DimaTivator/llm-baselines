@@ -79,6 +79,7 @@ def apply_svd_llm(
     device: str = "cpu",
     margin: int = 0,
     low_rank_kernel: str = "torch",
+    auto_rank_multiple: int | None = None,
 ) -> tuple[torch.nn.Module, dict]:
     """SVD-LLM: whitening-aware SVD compression, applied in-place.
 
@@ -98,6 +99,10 @@ def apply_svd_llm(
             more aggressively than the bare effective rank).
         low_rank_kernel: ``"torch"`` for two ``Linear`` calls or ``"triton"``
             for the inference-only fused prototype with an automatic fallback.
+        auto_rank_multiple: if set with ``rank="auto"``, floor each retained
+            rank to this multiple. A zero result is clamped to rank 16, the
+            smallest rank used by this BF16 tensor-core experiment. Must be a
+            positive multiple of 16.
 
     Returns:
         ``(model, comp_info)`` where ``comp_info`` maps each compressed layer
@@ -106,6 +111,13 @@ def apply_svd_llm(
     from models.compress import LowRankLinear, effective_rank
 
     auto = isinstance(rank, str) and rank == "auto"
+    if auto_rank_multiple is not None:
+        if not auto:
+            raise ValueError("auto_rank_multiple requires rank='auto'")
+        if auto_rank_multiple < 16 or auto_rank_multiple % 16 != 0:
+            raise ValueError(
+                "auto_rank_multiple must be a positive multiple of 16"
+            )
     comp_info: dict[str, int] = {}
 
     for parent_name, parent in list(model.named_modules()):
@@ -121,6 +133,8 @@ def apply_svd_llm(
             max_rank = min(out_f, in_f)
 
             r = round(effective_rank(W)) + margin if auto else int(rank)
+            if auto_rank_multiple is not None:
+                r = max(16, (r // auto_rank_multiple) * auto_rank_multiple)
             r = max(1, min(r, max_rank))
             if r >= max_rank:
                 continue  # no compression possible
@@ -165,5 +179,7 @@ def apply_svd_llm(
             comp_info[full_name] = r
 
     tag = "auto" if auto else rank
+    if auto_rank_multiple is not None:
+        tag = f"{tag}, floor-multiple={auto_rank_multiple}"
     print(f"[SVD-LLM] Compressed {len(comp_info)} modules with rank={tag}.")
     return model, comp_info
