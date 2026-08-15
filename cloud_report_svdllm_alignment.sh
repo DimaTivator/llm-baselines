@@ -48,7 +48,7 @@ for result_path in sorted(result_dir.glob("results-*-auto-floor-m256.json")):
             f"compressed_peak_mib={compressed['peak_memory_mib']:.3f}"
         )
 
-for process_path in sorted(result_dir.glob("gpu-processes-*-auto-floor-m256.csv")):
+for process_path in sorted(result_dir.glob("gpu-processes*.csv")):
     samples = 0
     processes = Counter()
     for line in process_path.read_text().splitlines():
