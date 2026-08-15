@@ -16,7 +16,7 @@ result_dir = Path(sys.argv[1])
 if not result_dir.is_dir():
     raise SystemExit(f"Missing result directory: {result_dir}")
 
-for result_path in sorted(result_dir.glob("results-*-auto-floor-m256.json")):
+for result_path in sorted(result_dir.glob("results-*-auto-floor-m*.json")):
     payload = json.loads(result_path.read_text())
     print(f"RESULT={result_path}")
     checkpoint = payload["checkpoints"][0]
