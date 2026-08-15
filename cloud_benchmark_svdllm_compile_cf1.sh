@@ -21,6 +21,18 @@ fi
 OUTPUT_PATH="${RESULT_DIR}/results-${COMPILE_MODE}${RANK_SUFFIX}.json"
 CHECKPOINT="${CHECKPOINT_ROOT}/${EXPERIMENT}/ckpts/latest/main.pt"
 CALIBRATION="${CHECKPOINT_ROOT}/calibration/val.bin"
+GPU_PROCESS_LOG="${RESULT_DIR}/gpu-processes-${COMPILE_MODE}${RANK_SUFFIX}.csv"
+
+monitor_gpu_processes() {
+    local benchmark_pid=$1
+    while kill -0 "${benchmark_pid}" 2>/dev/null; do
+        date -u +%Y-%m-%dT%H:%M:%SZ >>"${GPU_PROCESS_LOG}"
+        nvidia-smi \
+            --query-compute-apps=pid,process_name,used_memory \
+            --format=csv,noheader >>"${GPU_PROCESS_LOG}"
+        sleep 2
+    done
+}
 
 set -o pipefail
 (
@@ -36,7 +48,11 @@ set -o pipefail
 
     nvidia-smi --query-gpu=name,memory.total,memory.used,memory.free \
         --format=csv,noheader
+    nvidia-smi --query-compute-apps=pid,process_name,used_memory \
+        --format=csv
 
+    : >"${GPU_PROCESS_LOG}"
+    set +e
     PYTHONUNBUFFERED=1 python src/compression/benchmark_svd_llm_inference.py \
         "${CHECKPOINT}" \
         --device cuda:0 \
@@ -49,7 +65,19 @@ set -o pipefail
         --timed_steps 50 \
         --calibration_tokens "${CALIBRATION}" \
         "${RANK_ARGS[@]}" \
-        --output "${OUTPUT_PATH}"
+        --output "${OUTPUT_PATH}" &
+    BENCHMARK_PID=$!
+    monitor_gpu_processes "${BENCHMARK_PID}" &
+    MONITOR_PID=$!
+    wait "${BENCHMARK_PID}"
+    BENCHMARK_STATUS=$?
+    wait "${MONITOR_PID}"
+    nvidia-smi --query-gpu=name,memory.total,memory.used,memory.free \
+        --format=csv,noheader
+    nvidia-smi --query-compute-apps=pid,process_name,used_memory \
+        --format=csv
+    set -e
+    exit "${BENCHMARK_STATUS}"
 ) 2>&1 | tee "${LOG_PATH}"
 STATUS=${PIPESTATUS[0]}
 
@@ -79,5 +107,6 @@ fi
 echo "EXIT=${STATUS}"
 echo "LOG=${LOG_PATH}"
 echo "RESULT=${OUTPUT_PATH}"
+echo "GPU_PROCESS_LOG=${GPU_PROCESS_LOG}"
 tail -200 "${LOG_PATH}"
 exit 0
