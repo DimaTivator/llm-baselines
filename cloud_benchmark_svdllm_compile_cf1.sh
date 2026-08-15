@@ -9,6 +9,7 @@ RESULT_DIR=${RESULT_DIR:-/home/jovyan/results/svdllm-inference-compile-cf1}
 LOG_DIR=${LOG_DIR:-/home/jovyan/logs}
 COMPILE_MODE=${COMPILE_MODE:-max-autotune}
 AUTO_RANK_MULTIPLE=${AUTO_RANK_MULTIPLE:-}
+UPLOAD_RESULTS=${UPLOAD_RESULTS:-1}
 mkdir -p "${RESULT_DIR}" "${LOG_DIR}"
 
 LOG_PATH="${LOG_DIR}/benchmark-svdllm-compile-cf1-$(date +%F_%H%M%S).log"
@@ -81,7 +82,7 @@ set -o pipefail
 ) 2>&1 | tee "${LOG_PATH}"
 STATUS=${PIPESTATUS[0]}
 
-if [[ -f "${OUTPUT_PATH}" ]]; then
+if [[ -f "${OUTPUT_PATH}" && "${UPLOAD_RESULTS}" == "1" ]]; then
     python - "${OUTPUT_PATH}" "${HF_REPO_ID}" "${COMPILE_MODE}" "${RANK_SUFFIX}" \
         >>"${LOG_PATH}" 2>&1 <<'PY'
 import sys
