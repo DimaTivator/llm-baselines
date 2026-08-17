@@ -2,9 +2,10 @@
 """Benchmark dense vs SVD-LLM(auto) forward-pass speed until CUDA OOM.
 
 The benchmark measures a full, non-autoregressive model forward at the
-checkpoint sequence length. For each model representation it doubles the
-batch size from 1 until the first CUDA OOM (or ``--max_batch_size``), then
-writes latency, throughput, and peak-memory measurements to JSON.
+checkpoint sequence length. For each model representation it either measures
+explicit ``--batch_sizes`` or doubles the batch size from 1 until the first
+CUDA OOM (or ``--max_batch_size``), then writes latency, throughput, and
+peak-memory measurements to JSON.
 
 Example:
     PYTHONPATH=src python src/compression/benchmark_svd_llm_inference.py \
@@ -243,11 +244,23 @@ def _benchmark_model(
     timed_steps: int,
     dtype: torch.dtype,
     max_batch_size: int | None,
+    batch_sizes: list[int] | None,
 ) -> list[dict[str, float | int | str]]:
     rows: list[dict[str, float | int | str]] = []
-    batch_size = 1
+    if batch_sizes is None:
+        def power_of_two_batches():
+            batch_size = 1
+            while max_batch_size is None or batch_size <= max_batch_size:
+                yield batch_size
+                batch_size *= 2
 
-    while max_batch_size is None or batch_size <= max_batch_size:
+        requested_batch_sizes = power_of_two_batches()
+    else:
+        requested_batch_sizes = batch_sizes
+
+    last_attempted_batch_size = 1
+    for batch_size in requested_batch_sizes:
+        last_attempted_batch_size = batch_size
         try:
             input_ids = torch.randint(
                 0,
@@ -280,7 +293,6 @@ def _benchmark_model(
                 flush=True,
             )
             del input_ids
-            batch_size *= 2
         except RuntimeError as error:
             if not _is_cuda_oom(error):
                 raise
@@ -289,7 +301,9 @@ def _benchmark_model(
             break
 
     if not rows:
-        raise RuntimeError(f"{label} model OOM at batch size 1")
+        raise RuntimeError(
+            f"{label} model OOM at batch size {last_attempted_batch_size}"
+        )
     return rows
 
 
@@ -341,6 +355,16 @@ def main() -> None:
     parser.add_argument("--warmup_steps", default=5, type=int)
     parser.add_argument("--timed_steps", default=20, type=int)
     parser.add_argument("--max_batch_size", default=None, type=int)
+    parser.add_argument(
+        "--batch_sizes",
+        nargs="+",
+        default=None,
+        type=int,
+        help=(
+            "Benchmark only these batch sizes. Mutually exclusive with "
+            "--max_batch_size; otherwise the default sweep is 1, 2, 4, ..."
+        ),
+    )
     parser.add_argument(
         "--compile_mode",
         choices=COMPILE_MODES,
@@ -420,6 +444,14 @@ def main() -> None:
         parser.error("Warmup and timed step counts must be positive.")
     if args.max_batch_size is not None and args.max_batch_size < 1:
         parser.error("--max_batch_size must be positive.")
+    if args.batch_sizes is not None:
+        if args.max_batch_size is not None:
+            parser.error("--batch_sizes and --max_batch_size are mutually exclusive.")
+        if any(batch_size < 1 for batch_size in args.batch_sizes):
+            parser.error("--batch_sizes values must be positive.")
+        if len(set(args.batch_sizes)) != len(args.batch_sizes):
+            parser.error("--batch_sizes values must be unique.")
+        args.batch_sizes.sort()
     if args.compile_cache_size_limit < 1:
         parser.error("--compile_cache_size_limit must be positive.")
     if args.auto_rank_multiple is not None and (
@@ -463,10 +495,33 @@ def main() -> None:
         "target_modules": args.target_modules,
         "low_rank_kernel": args.low_rank_kernel,
         "auto_rank_multiple": args.auto_rank_multiple,
+        "requested_batch_sizes": args.batch_sizes,
         "checkpoints": [],
     }
     if args.output.exists():
         payload = json.loads(args.output.read_text())
+        protocol_fields = (
+            "dtype",
+            "calib_batches",
+            "calib_batch_size",
+            "warmup_steps",
+            "timed_steps",
+            "compile_mode",
+            "inductor_pattern_matcher",
+            "target_modules",
+            "low_rank_kernel",
+            "auto_rank_multiple",
+            "requested_batch_sizes",
+        )
+        mismatches = {
+            field: (payload.get(field), new_payload[field])
+            for field in protocol_fields
+            if payload.get(field) != new_payload[field]
+        }
+        if mismatches:
+            raise ValueError(
+                f"Cannot resume {args.output} with a different protocol: {mismatches}"
+            )
         print(
             f"Resuming {args.output}: {len(payload['checkpoints'])} checkpoints complete",
             flush=True,
@@ -512,6 +567,7 @@ def main() -> None:
             args.timed_steps,
             dtype,
             args.max_batch_size,
+            args.batch_sizes,
         )
         model_was_compiled = compiled_model is not model
         del compiled_model
@@ -593,6 +649,7 @@ def main() -> None:
             args.timed_steps,
             dtype,
             args.max_batch_size,
+            args.batch_sizes,
         )
         model_was_compiled = compiled_model is not model
         del compiled_model
