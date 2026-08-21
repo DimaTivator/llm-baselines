@@ -26,6 +26,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval_batches", type=int, default=64)
     parser.add_argument("--eval_batch_size", type=int, default=8)
     parser.add_argument("--calib_batches", type=int, default=16)
+    parser.add_argument(
+        "--global_base_loss",
+        type=float,
+        default=None,
+        help="Best dense validation loss for this model size.",
+    )
     return parser.parse_args()
 
 
@@ -62,7 +68,7 @@ def is_complete(output_dir: Path, auto_rank_multiple: int, margins: list[int]) -
     )
 
 
-def collect_rows(output_root: Path) -> list[dict]:
+def collect_rows(output_root: Path, global_base_loss: float | None) -> list[dict]:
     rows: list[dict] = []
     for result_path in output_root.glob("*m/*/svdllm_margin_table.json"):
         try:
@@ -95,6 +101,19 @@ def collect_rows(output_root: Path) -> list[dict]:
                     "delta_loss": compressed_loss - base_loss,
                     "relative_delta_loss_percent": (
                         100.0 * (compressed_loss - base_loss) / base_loss
+                    ),
+                    "global_base_loss": global_base_loss,
+                    "global_delta_loss": (
+                        None
+                        if global_base_loss is None
+                        else compressed_loss - global_base_loss
+                    ),
+                    "global_relative_delta_loss_percent": (
+                        None
+                        if global_base_loss is None
+                        else 100.0
+                        * (compressed_loss - global_base_loss)
+                        / global_base_loss
                     ),
                     "base_ppl": float(base["ppl"]),
                     "compressed_ppl": float(compressed["ppl"]),
@@ -133,8 +152,8 @@ def build_markdown(
             [
                 f"## {size}",
                 "",
-                "| coef | lr | margin | CR | mean r | min r | base loss | compressed loss | Δloss | Δloss, % | base PPL | compressed PPL | ΔPPL |",
-                "|---:|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+                "| coef | lr | margin | CR | mean r | min r | own base loss | compressed loss | Δown | Δown, % | Δglobal | Δglobal, % | base PPL | compressed PPL | ΔPPL |",
+                "|---:|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
         for row in scale_rows:
@@ -152,6 +171,16 @@ def build_markdown(
                         f"{row['compressed_loss']:.4f}",
                         f"{row['delta_loss']:+.4f}",
                         f"{row['relative_delta_loss_percent']:+.2f}%",
+                        (
+                            "N/A"
+                            if row["global_delta_loss"] is None
+                            else f"{row['global_delta_loss']:+.4f}"
+                        ),
+                        (
+                            "N/A"
+                            if row["global_relative_delta_loss_percent"] is None
+                            else f"{row['global_relative_delta_loss_percent']:+.2f}%"
+                        ),
                         f"{row['base_ppl']:.2f}",
                         f"{row['compressed_ppl']:.2f}",
                         f"{row['delta_ppl']:+.2f}",
@@ -164,12 +193,17 @@ def build_markdown(
 
 
 def persist_aggregate(
-    output_root: Path, total: int, auto_rank_multiple: int, margins: list[int]
+    output_root: Path,
+    total: int,
+    auto_rank_multiple: int,
+    margins: list[int],
+    global_base_loss: float | None,
 ) -> None:
-    rows = collect_rows(output_root)
+    rows = collect_rows(output_root, global_base_loss)
     payload = {
         "auto_rank_multiple": auto_rank_multiple,
         "margins": margins,
+        "global_base_loss": global_base_loss,
         "completed_checkpoints": len({row["checkpoint"] for row in rows}),
         "total_checkpoints": total,
         "rows": rows,
@@ -210,7 +244,11 @@ def main() -> None:
     )
 
     persist_aggregate(
-        args.output_root, len(checkpoints), args.auto_rank_multiple, args.margins
+        args.output_root,
+        len(checkpoints),
+        args.auto_rank_multiple,
+        args.margins,
+        args.global_base_loss,
     )
     for index, (checkpoint, metadata) in enumerate(checkpoints, start=1):
         output_dir = result_dir(args.output_root, metadata)
@@ -251,11 +289,19 @@ def main() -> None:
         ]
         subprocess.run(command, check=True)
         persist_aggregate(
-            args.output_root, len(checkpoints), args.auto_rank_multiple, args.margins
+            args.output_root,
+            len(checkpoints),
+            args.auto_rank_multiple,
+            args.margins,
+            args.global_base_loss,
         )
 
     persist_aggregate(
-        args.output_root, len(checkpoints), args.auto_rank_multiple, args.margins
+        args.output_root,
+        len(checkpoints),
+        args.auto_rank_multiple,
+        args.margins,
+        args.global_base_loss,
     )
     print(f"Sweep complete: {args.output_root}", flush=True)
 
