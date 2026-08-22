@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/workspace-SR006.nfs2/dimativator/svdllm-l2-wd-speed-20260822}"
+EXPERIMENT_LIST="${EXPERIMENT_LIST:-src/compression/svdllm_l2_wd_speed_checkpoints.txt}"
+EXPECTED_MODELS="${EXPECTED_MODELS:-3}"
+RESULT_DIR="${RESULT_DIR:-/workspace-SR006.nfs2/dimativator/results/svdllm-l2-wd-speed-20260822}"
+LOG_DIR="${LOG_DIR:-/home/jovyan/logs}"
+COMPILE_MODE="${COMPILE_MODE:-max-autotune}"
+mkdir -p "${RESULT_DIR}" "${LOG_DIR}"
+OUTPUT_PATH="${RESULT_DIR}/results.json"
+GPU_PROCESS_LOG="${RESULT_DIR}/gpu-processes.csv"
+LOG_PATH="${LOG_DIR}/benchmark-svdllm-l2-wd-speed-$(date +%F_%H%M%S).log"
+export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/tmp/torchinductor-svdllm-l2-wd-speed}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/tmp/triton-svdllm-l2-wd-speed}"
+
+mapfile -t EXPERIMENTS < <(sed '/^[[:space:]]*$/d' "${EXPERIMENT_LIST}")
+if [[ "${#EXPERIMENTS[@]}" -ne "${EXPECTED_MODELS}" ]]; then
+    echo "Expected ${EXPECTED_MODELS} experiments, found ${#EXPERIMENTS[@]}"
+    exit 1
+fi
+CHECKPOINTS=()
+for experiment in "${EXPERIMENTS[@]}"; do
+    checkpoint="${CHECKPOINT_ROOT}/${experiment}/ckpts/latest/main.pt"
+    [[ -f "${checkpoint}" ]] || { echo "Missing checkpoint: ${checkpoint}"; exit 1; }
+    CHECKPOINTS+=("${checkpoint}")
+done
+CALIBRATION="${CHECKPOINT_ROOT}/calibration/val.bin"
+[[ -f "${CALIBRATION}" ]] || { echo "Missing calibration tokens: ${CALIBRATION}"; exit 1; }
+
+monitor_gpu_processes() {
+    local benchmark_pid=$1
+    while kill -0 "${benchmark_pid}" 2>/dev/null; do
+        date -u +%Y-%m-%dT%H:%M:%SZ >>"${GPU_PROCESS_LOG}"
+        nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader >>"${GPU_PROCESS_LOG}"
+        sleep 2
+    done
+}
+
+set -o pipefail
+(
+    GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)"
+    [[ "${GPU_NAME}" == *H100* ]] || { echo "Expected H100, found ${GPU_NAME}"; exit 1; }
+    INITIAL_PROCESSES="$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sed '/^[[:space:]]*$/d' | wc -l)"
+    [[ "${INITIAL_PROCESSES}" -eq 0 ]] || { echo "GPU not isolated: ${INITIAL_PROCESSES} compute processes"; exit 1; }
+    nvidia-smi --query-gpu=name,uuid,memory.total,memory.used,memory.free --format=csv
+    : >"${GPU_PROCESS_LOG}"
+    PYTHONUNBUFFERED=1 PYTHONPATH=src python src/compression/benchmark_svd_llm_inference.py \
+        "${CHECKPOINTS[@]}" \
+        --device cuda:0 --dtype bfloat16 \
+        --compile_mode "${COMPILE_MODE}" --disable_inductor_pattern_matcher \
+        --margins 0 -10 -25 -50 -100 -150 -200 -250 -300 -350 -400 -450 -500 -550 -600 -650 -700 -750 -800 -850 -900 -950 -1000 -1050 -1100 -1150 -1200 -1250 -1300 \
+        --disable_whitened_residual_guard --stop_at_rank_one \
+        --batch_sizes 256 --calib_batches 16 --calib_batch_size 8 \
+        --warmup_steps 10 --timed_steps 50 --calibration_tokens "${CALIBRATION}" \
+        --output "${OUTPUT_PATH}" &
+    BENCHMARK_PID=$!
+    monitor_gpu_processes "${BENCHMARK_PID}" &
+    MONITOR_PID=$!
+    set +e
+    wait "${BENCHMARK_PID}"; BENCHMARK_STATUS=$?
+    wait "${MONITOR_PID}"
+    set -e
+    echo "BENCHMARK_EXIT=${BENCHMARK_STATUS}"
+    exit "${BENCHMARK_STATUS}"
+) 2>&1 | tee "${LOG_PATH}"
+STATUS=${PIPESTATUS[0]}
+if [[ "${STATUS}" -eq 0 ]]; then
+    : >"${RESULT_DIR}/BENCHMARK_EXIT_0"
+fi
+echo "EXIT=${STATUS}"
+echo "LOG=${LOG_PATH}"
+echo "RESULT=${OUTPUT_PATH}"
+echo "GPU_PROCESS_LOG=${GPU_PROCESS_LOG}"
+exit "${STATUS}"

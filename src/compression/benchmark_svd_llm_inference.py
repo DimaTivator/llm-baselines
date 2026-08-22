@@ -19,6 +19,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import copy
 import gc
 import json
 import sys
@@ -409,6 +410,29 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--margins",
+        nargs="+",
+        default=None,
+        type=int,
+        help=(
+            "Evaluate one SVD-LLM(auto) model for every supplied rank margin. "
+            "The default is only margin 0, preserving the original protocol."
+        ),
+    )
+    parser.add_argument(
+        "--disable_whitened_residual_guard",
+        action="store_true",
+        help=(
+            "Disable the automatic 5%% whitened-residual rank floor. This is "
+            "needed only for intentional sweeps down to rank one."
+        ),
+    )
+    parser.add_argument(
+        "--stop_at_rank_one",
+        action="store_true",
+        help="Stop a supplied margin sweep once every compressed layer has rank one.",
+    )
+    parser.add_argument(
         "--dtype",
         choices=("bfloat16", "float16", "float32"),
         default="bfloat16",
@@ -495,6 +519,10 @@ def main() -> None:
         "target_modules": args.target_modules,
         "low_rank_kernel": args.low_rank_kernel,
         "auto_rank_multiple": args.auto_rank_multiple,
+        "margins": args.margins if args.margins is not None else [0],
+        "max_whitened_relative_residual": (
+            None if args.disable_whitened_residual_guard else 0.05
+        ),
         "requested_batch_sizes": args.batch_sizes,
         "checkpoints": [],
     }
@@ -511,6 +539,8 @@ def main() -> None:
             "target_modules",
             "low_rank_kernel",
             "auto_rank_multiple",
+            "margins",
+            "max_whitened_relative_residual",
             "requested_batch_sizes",
         )
         mismatches = {
@@ -529,12 +559,14 @@ def main() -> None:
     else:
         payload = new_payload
     completed_checkpoints = {
-        row["checkpoint"] for row in payload["checkpoints"]
+        (row["checkpoint"], int(row.get("margin", 0)))
+        for row in payload["checkpoints"]
     }
+    margins = args.margins if args.margins is not None else [0]
 
     for checkpoint_index, checkpoint in enumerate(args.checkpoints, start=1):
         resolved_checkpoint = str(checkpoint.resolve())
-        if resolved_checkpoint in completed_checkpoints:
+        if all((resolved_checkpoint, margin) in completed_checkpoints for margin in margins):
             print(
                 f"[{checkpoint_index}/{len(args.checkpoints)}] "
                 f"already complete: {checkpoint}",
@@ -595,93 +627,109 @@ def main() -> None:
         )
         del calibration_data
 
-        print("Applying SVD-LLM with per-layer automatic effective rank ...", flush=True)
-        _, compression_info = apply_svd_llm(
-            model,
-            rank="auto",
-            whitening_stats=whitening_stats,
-            target_modules=tuple(args.target_modules),
-            device=str(device),
-            low_rank_kernel=args.low_rank_kernel,
-            auto_rank_multiple=args.auto_rank_multiple,
-        )
-        if args.auto_rank_multiple is not None:
-            misaligned = {
-                name: rank
-                for name, rank in compression_info.items()
-                if rank % 16 != 0
-            }
-            if misaligned:
-                raise AssertionError(
-                    "Found ranks not divisible by 16: "
-                    f"{misaligned}"
+        for margin in margins:
+            if (resolved_checkpoint, margin) in completed_checkpoints:
+                print(f"margin={margin:+d} already complete", flush=True)
+                continue
+            print(
+                "Applying SVD-LLM with per-layer automatic effective rank "
+                f"and margin={margin:+d} ...",
+                flush=True,
+            )
+            compressed_model = copy.deepcopy(model)
+            _, compression_info = apply_svd_llm(
+                compressed_model,
+                rank="auto",
+                whitening_stats=whitening_stats,
+                target_modules=tuple(args.target_modules),
+                device=str(device),
+                margin=margin,
+                low_rank_kernel=args.low_rank_kernel,
+                auto_rank_multiple=args.auto_rank_multiple,
+                max_whitened_relative_residual=(
+                    None if args.disable_whitened_residual_guard else 0.05
+                ),
+            )
+            if args.auto_rank_multiple is not None:
+                misaligned = {
+                    name: rank
+                    for name, rank in compression_info.items()
+                    if rank % args.auto_rank_multiple != 0
+                }
+                if misaligned:
+                    raise AssertionError(
+                        "Found ranks not divisible by the requested multiple: "
+                        f"{misaligned}"
+                    )
+            compressed_model.eval()
+
+            order_check = _verify_low_rank_order(compressed_model, dtype)
+            print(
+                f"Verified {order_check['layers_checked']} low-rank layers execute "
+                "the right factor B before A(U*S); unwhitened order is "
+                "U * (S * (V^T * input)).",
+                flush=True,
+            )
+            compressed_params = _parameter_count(compressed_model)
+            print(
+                f"\nBenchmarking margin={margin:+d} compressed model "
+                f"({compressed_params / 1e6:.2f}M params, "
+                f"{original_params / compressed_params:.3f}x parameter compression) ...",
+                flush=True,
+            )
+            compiled_model = _compile_model(compressed_model, args.compile_mode)
+            compressed_rows = _benchmark_model(
+                compiled_model,
+                "compressed",
+                config,
+                device,
+                sequence_length,
+                args.warmup_steps,
+                args.timed_steps,
+                dtype,
+                args.max_batch_size,
+                args.batch_sizes,
+            )
+            model_was_compiled = compiled_model is not compressed_model
+            del compiled_model
+            if model_was_compiled:
+                torch._dynamo.reset()
+                _clear_cuda()
+
+            comparisons = _comparison_rows(original_rows, compressed_rows)
+            print("\nCommon-batch speedups:", flush=True)
+            for row in comparisons:
+                print(
+                    f"  batch={row['batch_size']:<5d} speedup={row['speedup']:.3f}x",
+                    flush=True,
                 )
-            print(
-                f"Verified all {len(compression_info)} retained ranks are "
-                "multiples of 16.",
-                flush=True,
-            )
-        del whitening_stats
-        _clear_cuda()
-        model.eval()
 
-        order_check = _verify_low_rank_order(model, dtype)
-        print(
-            f"Verified {order_check['layers_checked']} low-rank layers execute "
-            "the right factor B before A(U*S); unwhitened order is "
-            "U * (S * (V^T * input)).",
-            flush=True,
-        )
-        compressed_params = _parameter_count(model)
-        print(
-            f"\nBenchmarking compressed model ({compressed_params / 1e6:.2f}M params, "
-            f"{original_params / compressed_params:.3f}x parameter compression) ...",
-            flush=True,
-        )
-        compiled_model = _compile_model(model, args.compile_mode)
-        compressed_rows = _benchmark_model(
-            compiled_model,
-            "compressed",
-            config,
-            device,
-            sequence_length,
-            args.warmup_steps,
-            args.timed_steps,
-            dtype,
-            args.max_batch_size,
-            args.batch_sizes,
-        )
-        model_was_compiled = compiled_model is not model
-        del compiled_model
-        if model_was_compiled:
-            torch._dynamo.reset()
+            payload["checkpoints"].append(
+                {
+                    "checkpoint": resolved_checkpoint,
+                    "margin": margin,
+                    "sequence_length": sequence_length,
+                    "original_parameters": original_params,
+                    "compressed_parameters": compressed_params,
+                    "parameter_compression_ratio": original_params / compressed_params,
+                    "retained_ranks": compression_info,
+                    "factor_order_check": order_check,
+                    "original_max_batch_size": int(original_rows[-1]["batch_size"]),
+                    "compressed_max_batch_size": int(compressed_rows[-1]["batch_size"]),
+                    "measurements": original_rows + compressed_rows,
+                    "comparisons": comparisons,
+                }
+            )
+            _write_results(args.output, payload)
+            print(f"Wrote {args.output}", flush=True)
+            all_rank_one = bool(compression_info) and max(compression_info.values()) == 1
+            del compressed_model
             _clear_cuda()
+            if args.stop_at_rank_one and all_rank_one:
+                print("All compressed layers reached rank one; stopping margin sweep.", flush=True)
+                break
 
-        comparisons = _comparison_rows(original_rows, compressed_rows)
-        print("\nCommon-batch speedups:", flush=True)
-        for row in comparisons:
-            print(
-                f"  batch={row['batch_size']:<5d} speedup={row['speedup']:.3f}x",
-                flush=True,
-            )
-
-        payload["checkpoints"].append(
-            {
-                "checkpoint": resolved_checkpoint,
-                "sequence_length": sequence_length,
-                "original_parameters": original_params,
-                "compressed_parameters": compressed_params,
-                "parameter_compression_ratio": original_params / compressed_params,
-                "retained_ranks": compression_info,
-                "factor_order_check": order_check,
-                "original_max_batch_size": int(original_rows[-1]["batch_size"]),
-                "compressed_max_batch_size": int(compressed_rows[-1]["batch_size"]),
-                "measurements": original_rows + compressed_rows,
-                "comparisons": comparisons,
-            }
-        )
-        _write_results(args.output, payload)
-        print(f"Wrote {args.output}", flush=True)
+        del whitening_stats
 
         del model
         _clear_cuda()
