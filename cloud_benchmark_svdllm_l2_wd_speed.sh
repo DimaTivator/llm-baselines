@@ -8,6 +8,9 @@ EXPECTED_MODELS="${EXPECTED_MODELS:-3}"
 RESULT_DIR="${RESULT_DIR:-/workspace-SR006.nfs2/dimativator/results/svdllm-l2-wd-speed-20260822}"
 LOG_DIR="${LOG_DIR:-/home/jovyan/logs}"
 COMPILE_MODE="${COMPILE_MODE:-max-autotune}"
+AUTO_RANK_MULTIPLE="${AUTO_RANK_MULTIPLE:-}"
+DISABLE_WHITENED_RESIDUAL_GUARD="${DISABLE_WHITENED_RESIDUAL_GUARD:-1}"
+STOP_AT_RANK_ONE="${STOP_AT_RANK_ONE:-1}"
 mkdir -p "${RESULT_DIR}" "${LOG_DIR}"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
 GPU_PROCESS_LOG="${RESULT_DIR}/gpu-processes.csv"
@@ -40,6 +43,20 @@ done
 CALIBRATION="${CHECKPOINT_ROOT}/calibration/val.bin"
 [[ -f "${CALIBRATION}" ]] || { echo "Missing calibration tokens: ${CALIBRATION}"; exit 1; }
 
+COMPRESSION_ARGS=()
+if [[ -n "${AUTO_RANK_MULTIPLE}" ]]; then
+    [[ "${AUTO_RANK_MULTIPLE}" =~ ^[0-9]+$ ]] || {
+        echo "AUTO_RANK_MULTIPLE must be an integer"; exit 1;
+    }
+    COMPRESSION_ARGS+=(--auto_rank_multiple "${AUTO_RANK_MULTIPLE}")
+fi
+if [[ "${DISABLE_WHITENED_RESIDUAL_GUARD}" == "1" ]]; then
+    COMPRESSION_ARGS+=(--disable_whitened_residual_guard)
+fi
+if [[ "${STOP_AT_RANK_ONE}" == "1" ]]; then
+    COMPRESSION_ARGS+=(--stop_at_rank_one)
+fi
+
 monitor_gpu_processes() {
     local benchmark_pid=$1
     while kill -0 "${benchmark_pid}" 2>/dev/null; do
@@ -68,7 +85,7 @@ PY
         --device cuda:0 --dtype bfloat16 \
         --compile_mode "${COMPILE_MODE}" --disable_inductor_pattern_matcher \
         --margins 0 -10 -25 -50 -100 -150 -200 -250 -300 -350 -400 -450 -500 -550 -600 -650 -700 -750 -800 -850 -900 -950 -1000 -1050 -1100 -1150 -1200 -1250 -1300 \
-        --disable_whitened_residual_guard --stop_at_rank_one \
+        "${COMPRESSION_ARGS[@]}" \
         --batch_sizes 256 --calib_batches 16 --calib_batch_size 8 \
         --warmup_steps 10 --timed_steps 50 --calibration_tokens "${CALIBRATION}" \
         --output "${OUTPUT_PATH}" &
