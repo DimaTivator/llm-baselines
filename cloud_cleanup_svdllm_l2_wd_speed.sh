@@ -5,7 +5,7 @@ set -euo pipefail
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/workspace-SR006.nfs2/dimativator/svdllm-l2-wd-speed-20260822}"
 RESULT_DIR="${RESULT_DIR:-/workspace-SR006.nfs2/dimativator/results/svdllm-l2-wd-speed-20260822}"
 EXPECTED_ROOT="/workspace-SR006.nfs2/dimativator/svdllm-l2-wd-speed-20260822"
-EXPECTED_RESULT="/workspace-SR006.nfs2/dimativator/results/svdllm-l2-wd-speed-20260822"
+EXPECTED_RESULT="${EXPECTED_RESULT:-/workspace-SR006.nfs2/dimativator/results/svdllm-l2-wd-speed-20260822}"
 HF_CACHE_DIR="/workspace-SR006.nfs2/dimativator/.hf-cache/datasets--DimaTivator--svdllm-l2-wd-speed-checkpoints"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
 GPU_PROCESS_LOG="${RESULT_DIR}/gpu-processes.csv"
