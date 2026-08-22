@@ -11,6 +11,7 @@ COMPILE_MODE="${COMPILE_MODE:-max-autotune}"
 AUTO_RANK_MULTIPLE="${AUTO_RANK_MULTIPLE:-}"
 DISABLE_WHITENED_RESIDUAL_GUARD="${DISABLE_WHITENED_RESIDUAL_GUARD:-1}"
 STOP_AT_RANK_ONE="${STOP_AT_RANK_ONE:-1}"
+MARGINS="${MARGINS:-0 -10 -25 -50 -100 -150 -200 -250 -300 -350 -400 -450 -500 -550 -600 -650 -700 -750 -800 -850 -900 -950 -1000 -1050 -1100 -1150 -1200 -1250 -1300}"
 mkdir -p "${RESULT_DIR}" "${LOG_DIR}"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
 GPU_PROCESS_LOG="${RESULT_DIR}/gpu-processes.csv"
@@ -56,6 +57,8 @@ fi
 if [[ "${STOP_AT_RANK_ONE}" == "1" ]]; then
     COMPRESSION_ARGS+=(--stop_at_rank_one)
 fi
+read -r -a MARGIN_ARGS <<<"${MARGINS}"
+[[ "${#MARGIN_ARGS[@]}" -gt 0 ]] || { echo "MARGINS must not be empty"; exit 1; }
 
 monitor_gpu_processes() {
     local benchmark_pid=$1
@@ -84,7 +87,7 @@ PY
         "${CHECKPOINTS[@]}" \
         --device cuda:0 --dtype bfloat16 \
         --compile_mode "${COMPILE_MODE}" --disable_inductor_pattern_matcher \
-        --margins 0 -10 -25 -50 -100 -150 -200 -250 -300 -350 -400 -450 -500 -550 -600 -650 -700 -750 -800 -850 -900 -950 -1000 -1050 -1100 -1150 -1200 -1250 -1300 \
+        --margins "${MARGIN_ARGS[@]}" \
         "${COMPRESSION_ARGS[@]}" \
         --batch_sizes 256 --calib_batches 16 --calib_batch_size 8 \
         --warmup_steps 10 --timed_steps 50 --calibration_tokens "${CALIBRATION}" \
