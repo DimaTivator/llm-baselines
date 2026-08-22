@@ -15,6 +15,61 @@ Typical usage:
 import torch
 
 
+@torch.no_grad()
+def stable_cholesky_whitening(
+    covariance: torch.Tensor,
+    relative_eigenvalue_floor: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return a numerically bounded Cholesky whitening factor and its inverse.
+
+    Calibration covariances can be nearly singular in individual projection
+    layers.  A fixed absolute ridge is not scale-aware and can disappear in a
+    float32 eigensolve, yielding a near-infinite inverse-whitening factor.  The
+    ridge below enforces a relative eigenvalue floor in float64.
+    """
+    if relative_eigenvalue_floor <= 0:
+        raise ValueError("relative_eigenvalue_floor must be positive")
+
+    covariance = covariance.detach().double()
+    covariance = (covariance + covariance.T) * 0.5
+    eigenvalues = torch.linalg.eigvalsh(covariance)
+    spectral_scale = eigenvalues.abs().max().clamp_min(1.0)
+    eigenvalue_floor = relative_eigenvalue_floor * spectral_scale
+    ridge = (eigenvalue_floor - eigenvalues.min()).clamp_min(0.0)
+    regularized = covariance + ridge * torch.eye(
+        covariance.shape[0], device=covariance.device, dtype=covariance.dtype
+    )
+    whitening = torch.linalg.cholesky(regularized)
+    inverse_whitening = torch.linalg.solve_triangular(
+        whitening,
+        torch.eye(
+            whitening.shape[0], device=whitening.device, dtype=whitening.dtype
+        ),
+        upper=False,
+    )
+    return whitening, inverse_whitening
+
+
+def rank_with_residual_guard(
+    singular_values: torch.Tensor,
+    rank: int,
+    multiple: int | None,
+    max_relative_residual: float,
+) -> int:
+    """Increase a proposed rank until whitened tail energy is bounded."""
+    if not 0 < max_relative_residual < 1:
+        raise ValueError("max_relative_residual must be in (0, 1)")
+    rank = min(rank, singular_values.numel())
+    total_energy = singular_values.square().sum()
+    while rank < singular_values.numel():
+        residual = (singular_values[rank:].square().sum() / total_energy).sqrt()
+        if residual <= max_relative_residual:
+            break
+        step = multiple if multiple is not None else 1
+        rank = min(rank + step, singular_values.numel())
+    return rank
+
+
 def collect_input_covariance(
     model: torch.nn.Module,
     dataloader,
@@ -80,6 +135,7 @@ def apply_svd_llm(
     margin: int = 0,
     low_rank_kernel: str = "torch",
     auto_rank_multiple: int | None = None,
+    max_whitened_relative_residual: float | None = 0.05,
 ) -> tuple[torch.nn.Module, dict]:
     """SVD-LLM: whitening-aware SVD compression, applied in-place.
 
@@ -103,6 +159,9 @@ def apply_svd_llm(
             rank to this multiple. A zero result is clamped to rank 16, the
             smallest rank used by this BF16 tensor-core experiment. Must be a
             positive multiple of 16.
+        max_whitened_relative_residual: for auto rank, raise the retained rank
+            in aligned steps until the whitened SVD tail has no more than this
+            relative Frobenius norm. Set to ``None`` to disable the guard.
 
     Returns:
         ``(model, comp_info)`` where ``comp_info`` maps each compressed layer
@@ -141,28 +200,34 @@ def apply_svd_llm(
 
             key = full_name + ".weight"
             if key in whitening_stats:
+                uses_whitening = True
                 X_cov = whitening_stats[key].float().to(W.device)  # (in, in)
-                # Eigen-decompose covariance for stable sqrt / inverse-sqrt
-                L, V = torch.linalg.eigh(
-                    X_cov + 1e-6 * torch.eye(X_cov.shape[0], device=X_cov.device)
-                )
-                L = L.clamp(min=0.0)
-                sqrt_cov = V @ torch.diag(L.sqrt()) @ V.T
-                W_white = W @ sqrt_cov
+                whitening, inverse_whitening = stable_cholesky_whitening(X_cov)
+                W_white = W.double() @ whitening
             else:
+                uses_whitening = False
                 W_white = W
-                sqrt_cov = None
-                L = None
-                V = None
+                inverse_whitening = None
 
             U, S, Vh = torch.linalg.svd(W_white, full_matrices=False)
-            A_weight = U[:, :r] * S[:r].unsqueeze(0)  # (out, r)
-            B_weight = Vh[:r, :]                       # (r, in)
+            if (
+                auto
+                and uses_whitening
+                and max_whitened_relative_residual is not None
+            ):
+                r = rank_with_residual_guard(
+                    S,
+                    r,
+                    auto_rank_multiple,
+                    max_whitened_relative_residual,
+                )
+            sqrt_s = S[:r].sqrt()
+            A_weight = U[:, :r] * sqrt_s.unsqueeze(0)  # (out, r)
+            B_weight = sqrt_s.unsqueeze(1) * Vh[:r, :] # (r, in)
 
-            if sqrt_cov is not None:
+            if inverse_whitening is not None:
                 # Undo whitening on the right factor: W ≈ A @ (B @ inv_sqrt_cov)
-                inv_sqrt_cov = V @ torch.diag(1.0 / (L.sqrt() + 1e-8)) @ V.T
-                B_weight = B_weight @ inv_sqrt_cov
+                B_weight = B_weight @ inverse_whitening
 
             bias = module.bias.data if module.bias is not None else None
             low_rank = LowRankLinear(

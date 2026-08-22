@@ -4,8 +4,9 @@ set -euo pipefail
 
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/workspace-SR006.nfs2/dimativator/spectral-wd-500m}"
 RESULT_DIR="${RESULT_DIR:-/workspace-SR006.nfs2/dimativator/results/svdllm-m16-compile-b256-500m}"
-EXPECTED_ROOT="/workspace-SR006.nfs2/dimativator/spectral-wd-500m"
-EXPECTED_RESULT="/workspace-SR006.nfs2/dimativator/results/svdllm-m16-compile-b256-500m"
+EXPECTED_ROOT="${EXPECTED_ROOT:-/workspace-SR006.nfs2/dimativator/spectral-wd-500m}"
+EXPECTED_RESULT="${EXPECTED_RESULT:-/workspace-SR006.nfs2/dimativator/results/svdllm-m16-compile-b256-500m}"
+EXPECTED_CHECKPOINTS="${EXPECTED_CHECKPOINTS:-6}"
 HF_CACHE_DIR="/workspace-SR006.nfs2/dimativator/.hf-cache/datasets--DimaTivator--spectral-wd-500m-checkpoints"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
 
@@ -22,14 +23,15 @@ if [[ ! -f "${OUTPUT_PATH}" ]]; then
     exit 1
 fi
 
-python - "${OUTPUT_PATH}" <<'PY'
+python - "${OUTPUT_PATH}" "${EXPECTED_CHECKPOINTS}" <<'PY'
 import json
 import sys
 
 payload = json.load(open(sys.argv[1]))
-if len(payload.get("checkpoints", [])) != 6:
-    raise SystemExit("Refusing cleanup: expected six completed checkpoints")
-print("RESULT_VALIDATED_CHECKPOINTS=6")
+expected = int(sys.argv[2])
+if len(payload.get("checkpoints", [])) != expected:
+    raise SystemExit(f"Refusing cleanup: expected {expected} completed checkpoints")
+print(f"RESULT_VALIDATED_CHECKPOINTS={expected}")
 PY
 
 if [[ -d "${CHECKPOINT_ROOT}" ]]; then

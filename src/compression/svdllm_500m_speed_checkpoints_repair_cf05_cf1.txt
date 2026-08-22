@@ -1,0 +1,2 @@
+h200_gpu2_05ch_bs32acc4_llama500m_adamw-spectral-l1-reg_wd1e-1_lr1e-3_sl1_0.5_finewebedu_erank
+h200_gpu2_05ch_bs32acc4_llama500m_adamw-spectral-l1-reg_wd1e-1_lr1e-3_sl1_1_finewebedu_erank

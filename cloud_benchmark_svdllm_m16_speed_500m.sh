@@ -5,6 +5,7 @@ set -u
 HF_REPO_ID=${HF_REPO_ID:-DimaTivator/spectral-wd-500m-checkpoints}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-/workspace-SR006.nfs2/dimativator/spectral-wd-500m}
 EXPERIMENT_LIST=${EXPERIMENT_LIST:-src/compression/svdllm_500m_speed_checkpoints.txt}
+EXPECTED_CHECKPOINTS=${EXPECTED_CHECKPOINTS:-6}
 RESULT_DIR=${RESULT_DIR:-/workspace-SR006.nfs2/dimativator/results/svdllm-m16-compile-b256-500m}
 LOG_DIR=${LOG_DIR:-/home/jovyan/logs}
 COMPILE_MODE=${COMPILE_MODE:-max-autotune}
@@ -19,9 +20,9 @@ export TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-/tmp/torchinductor-svd
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/triton-svdllm-m16-b256-500m}
 
 mapfile -t EXPERIMENTS < <(sed '/^[[:space:]]*$/d' "${EXPERIMENT_LIST}")
-if [[ "${#EXPERIMENTS[@]}" -ne 6 ]]; then
-    echo "Expected six experiments, found ${#EXPERIMENTS[@]}"
-    exit 0
+if [[ "${#EXPERIMENTS[@]}" -ne "${EXPECTED_CHECKPOINTS}" ]]; then
+    echo "Expected ${EXPECTED_CHECKPOINTS} experiments, found ${#EXPERIMENTS[@]}"
+    exit 1
 fi
 
 CHECKPOINTS=()
