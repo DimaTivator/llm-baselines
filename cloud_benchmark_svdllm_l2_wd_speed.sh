@@ -18,10 +18,12 @@ export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/tmp/torchinductor-sv
 # /tmp is local to this isolated benchmark pod and has enough room for
 # max-autotune's generated kernels.
 export HOME="${COMPILE_HOME:-/tmp/svdllm-l2-wd-home}"
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
-export TRITON_HOME="${TRITON_HOME:-${HOME}/.triton}"
-export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${TRITON_HOME}/cache}"
-export PYTORCH_TRITON_CACHE_DIR="${PYTORCH_TRITON_CACHE_DIR:-${TRITON_CACHE_DIR}}"
+export XDG_CACHE_HOME="${HOME}/.cache"
+# Cloud.ru exports a pre-existing quota-limited TRITON_CACHE_DIR. Override it
+# unconditionally rather than retaining the inherited value.
+export TRITON_HOME="${HOME}/.triton"
+export TRITON_CACHE_DIR="${TRITON_HOME}/cache"
+export PYTORCH_TRITON_CACHE_DIR="${TRITON_CACHE_DIR}"
 mkdir -p "${TORCHINDUCTOR_CACHE_DIR}" "${TRITON_CACHE_DIR}" "${XDG_CACHE_HOME}"
 
 mapfile -t EXPERIMENTS < <(sed '/^[[:space:]]*$/d' "${EXPERIMENT_LIST}")
