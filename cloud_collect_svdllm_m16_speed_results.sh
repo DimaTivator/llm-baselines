@@ -31,12 +31,23 @@ if len(pids) != 1:
 print(f"RESULT_VALIDATED_CHECKPOINTS={len(checkpoints)}")
 print(f"WATCHDOG_PIDS={','.join(sorted(pids))}")
 for entry in checkpoints:
-    common = entry["common_batches"]["256"]
+    comparison = next(
+        row for row in entry["comparisons"] if row["batch_size"] == 256
+    )
+    measurements = entry["measurements"]
+    dense = next(
+        row for row in measurements
+        if row["batch_size"] == 256 and row["model"] == "original"
+    )
+    compressed = next(
+        row for row in measurements
+        if row["batch_size"] == 256 and row["model"] == "compressed"
+    )
     print(
         "CHECKPOINT=" + entry["checkpoint"]
-        + f" DENSE_MS={common['dense']['mean_ms']:.4f}"
-        + f" COMPRESSED_MS={common['compressed']['mean_ms']:.4f}"
-        + f" SPEEDUP={common['speedup']:.4f}",
+        + f" DENSE_MS={dense['latency_ms']:.4f}"
+        + f" COMPRESSED_MS={compressed['latency_ms']:.4f}"
+        + f" SPEEDUP={comparison['speedup']:.4f}",
         flush=True,
     )
 PY
