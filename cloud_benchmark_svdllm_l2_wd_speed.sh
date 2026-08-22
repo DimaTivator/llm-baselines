@@ -14,6 +14,13 @@ GPU_PROCESS_LOG="${RESULT_DIR}/gpu-processes.csv"
 LOG_PATH="${LOG_DIR}/benchmark-svdllm-l2-wd-speed-$(date +%F_%H%M%S).log"
 export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/tmp/torchinductor-svdllm-l2-wd-speed}"
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/tmp/triton-svdllm-l2-wd-speed}"
+# Recent Triton releases derive their cache from HOME/XDG_CACHE_HOME and can
+# ignore TRITON_CACHE_DIR. /home/jovyan is quota-limited on Cloud.ru, whereas
+# /tmp is local to this isolated benchmark pod and has enough room for
+# max-autotune's generated kernels.
+export HOME="${COMPILE_HOME:-/tmp/svdllm-l2-wd-home}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
+mkdir -p "${TORCHINDUCTOR_CACHE_DIR}" "${TRITON_CACHE_DIR}" "${XDG_CACHE_HOME}"
 
 mapfile -t EXPERIMENTS < <(sed '/^[[:space:]]*$/d' "${EXPERIMENT_LIST}")
 if [[ "${#EXPERIMENTS[@]}" -ne "${EXPECTED_MODELS}" ]]; then
