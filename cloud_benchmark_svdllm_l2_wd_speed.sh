@@ -13,13 +13,15 @@ OUTPUT_PATH="${RESULT_DIR}/results.json"
 GPU_PROCESS_LOG="${RESULT_DIR}/gpu-processes.csv"
 LOG_PATH="${LOG_DIR}/benchmark-svdllm-l2-wd-speed-$(date +%F_%H%M%S).log"
 export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/tmp/torchinductor-svdllm-l2-wd-speed}"
-export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/tmp/triton-svdllm-l2-wd-speed}"
 # Recent Triton releases derive their cache from HOME/XDG_CACHE_HOME and can
 # ignore TRITON_CACHE_DIR. /home/jovyan is quota-limited on Cloud.ru, whereas
 # /tmp is local to this isolated benchmark pod and has enough room for
 # max-autotune's generated kernels.
 export HOME="${COMPILE_HOME:-/tmp/svdllm-l2-wd-home}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
+export TRITON_HOME="${TRITON_HOME:-${HOME}/.triton}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${TRITON_HOME}/cache}"
+export PYTORCH_TRITON_CACHE_DIR="${PYTORCH_TRITON_CACHE_DIR:-${TRITON_CACHE_DIR}}"
 mkdir -p "${TORCHINDUCTOR_CACHE_DIR}" "${TRITON_CACHE_DIR}" "${XDG_CACHE_HOME}"
 
 mapfile -t EXPERIMENTS < <(sed '/^[[:space:]]*$/d' "${EXPERIMENT_LIST}")
@@ -51,6 +53,12 @@ set -o pipefail
     [[ "${GPU_NAME}" == *H100* ]] || { echo "Expected H100, found ${GPU_NAME}"; exit 1; }
     INITIAL_PROCESSES="$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | sed '/^[[:space:]]*$/d' | wc -l)"
     [[ "${INITIAL_PROCESSES}" -eq 0 ]] || { echo "GPU not isolated: ${INITIAL_PROCESSES} compute processes"; exit 1; }
+    python - <<'PY'
+import os
+from triton import knobs
+print(f"TRITON_HOME={os.environ.get('TRITON_HOME')}", flush=True)
+print(f"TRITON_CACHE_DIR={knobs.cache.dir}", flush=True)
+PY
     nvidia-smi --query-gpu=name,uuid,memory.total,memory.used,memory.free --format=csv
     : >"${GPU_PROCESS_LOG}"
     PYTHONUNBUFFERED=1 PYTHONPATH=src python src/compression/benchmark_svd_llm_inference.py \
