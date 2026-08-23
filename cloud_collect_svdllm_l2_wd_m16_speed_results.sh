@@ -6,10 +6,11 @@ RESULT_DIR="${RESULT_DIR:?RESULT_DIR is required}"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
 GPU_PROCESS_LOG="${RESULT_DIR}/gpu-processes.csv"
 EXPECTED_ROWS="${EXPECTED_ROWS:-87}"
+EXPECTED_RESIDUAL_GUARD="${EXPECTED_RESIDUAL_GUARD:-none}"
 [[ -f "${OUTPUT_PATH}" ]] || { echo "Missing ${OUTPUT_PATH}"; exit 1; }
 [[ -f "${RESULT_DIR}/BENCHMARK_EXIT_0" ]] || { echo "BENCHMARK_EXIT_0 marker missing"; exit 1; }
 
-python - "${OUTPUT_PATH}" "${GPU_PROCESS_LOG}" "${EXPECTED_ROWS}" <<'PY'
+python - "${OUTPUT_PATH}" "${GPU_PROCESS_LOG}" "${EXPECTED_ROWS}" "${EXPECTED_RESIDUAL_GUARD}" <<'PY'
 import csv
 import hashlib
 import json
@@ -18,6 +19,7 @@ from collections import defaultdict
 from pathlib import Path
 
 result_path, process_path, expected_rows = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+expected_guard = None if sys.argv[4] == "none" else float(sys.argv[4])
 payload = json.loads(result_path.read_text())
 expected_labels = {
     "llama124m_adamw-spectral-l1-reg_wd1e-1_lr5e-3_sl1_0.01_finewebedu_erank",
@@ -28,8 +30,11 @@ if payload.get("compile_mode") != "max-autotune":
     raise SystemExit(f"Expected max-autotune, found {payload.get('compile_mode')}")
 if payload.get("auto_rank_multiple") != 16:
     raise SystemExit(f"Expected auto_rank_multiple=16, found {payload.get('auto_rank_multiple')}")
-if payload.get("max_whitened_relative_residual") != 0.05:
-    raise SystemExit("The standard 5% residual guard was not enabled")
+if payload.get("max_whitened_relative_residual") != expected_guard:
+    raise SystemExit(
+        "Wrong whitened residual guard: "
+        f"expected {expected_guard}, found {payload.get('max_whitened_relative_residual')}"
+    )
 entries = payload.get("checkpoints", [])
 if len(entries) != expected_rows:
     raise SystemExit(f"Expected {expected_rows} rows, found {len(entries)}")
