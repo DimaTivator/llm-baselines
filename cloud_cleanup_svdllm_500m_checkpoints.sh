@@ -9,11 +9,24 @@ EXPECTED_RESULT="${EXPECTED_RESULT:-/workspace-SR006.nfs2/dimativator/results/sv
 EXPECTED_CHECKPOINTS="${EXPECTED_CHECKPOINTS:-6}"
 EXPECTED_ROWS="${EXPECTED_ROWS:-${EXPECTED_CHECKPOINTS}}"
 EXPECTED_MARGINS="${EXPECTED_MARGINS:-}"
+EXPECTED_MARGIN_PRESET="${EXPECTED_MARGIN_PRESET:-}"
 EXPECTED_AUTO_RANK_MULTIPLE="${EXPECTED_AUTO_RANK_MULTIPLE:-}"
 EXPECTED_COMPILE_MODE="${EXPECTED_COMPILE_MODE:-}"
 EXPECTED_RESIDUAL_GUARD="${EXPECTED_RESIDUAL_GUARD:-}"
 HF_CACHE_DIR="/workspace-SR006.nfs2/dimativator/.hf-cache/datasets--DimaTivator--spectral-wd-500m-checkpoints"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
+
+if [[ -n "${EXPECTED_MARGIN_PRESET}" ]]; then
+    if [[ "${EXPECTED_MARGIN_PRESET}" != "symmetric30" ]]; then
+        echo "Unknown EXPECTED_MARGIN_PRESET=${EXPECTED_MARGIN_PRESET}"
+        exit 1
+    fi
+    if [[ -n "${EXPECTED_MARGINS}" ]]; then
+        echo "Set only one of EXPECTED_MARGIN_PRESET or EXPECTED_MARGINS"
+        exit 1
+    fi
+    EXPECTED_MARGINS="0 -10 10 -15 15 -20 20 -25 25 -30 30"
+fi
 
 if [[ ! "${EXPECTED_ROOT}" =~ ^/workspace-SR006\.nfs2/dimativator/spectral-wd-500m(-[a-zA-Z0-9._-]+)?$ ]]; then
     echo "Refusing unsafe EXPECTED_ROOT=${EXPECTED_ROOT}"
