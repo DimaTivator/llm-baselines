@@ -78,9 +78,12 @@ set -o pipefail
     [[ "${INITIAL_PROCESSES}" -eq 0 ]] || { echo "GPU not isolated: ${INITIAL_PROCESSES} compute processes"; exit 1; }
     python - <<'PY'
 import os
-from triton import knobs
+
+# ``triton.knobs`` is not available in the older Triton bundled with every
+# Cloud.ru PyTorch image.  The benchmark only needs to verify the cache env;
+# importing a version-specific diagnostic API must not abort the run.
 print(f"TRITON_HOME={os.environ.get('TRITON_HOME')}", flush=True)
-print(f"TRITON_CACHE_DIR={knobs.cache.dir}", flush=True)
+print(f"TRITON_CACHE_DIR={os.environ.get('TRITON_CACHE_DIR')}", flush=True)
 PY
     nvidia-smi --query-gpu=name,uuid,memory.total,memory.used,memory.free --format=csv
     : >"${GPU_PROCESS_LOG}"
