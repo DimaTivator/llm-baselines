@@ -7,9 +7,18 @@ RESULT_DIR="${RESULT_DIR:-/workspace-SR006.nfs2/dimativator/results/svdllm-m16-c
 EXPECTED_ROOT="${EXPECTED_ROOT:-/workspace-SR006.nfs2/dimativator/spectral-wd-500m}"
 EXPECTED_RESULT="${EXPECTED_RESULT:-/workspace-SR006.nfs2/dimativator/results/svdllm-m16-compile-b256-500m}"
 EXPECTED_CHECKPOINTS="${EXPECTED_CHECKPOINTS:-6}"
+EXPECTED_ROWS="${EXPECTED_ROWS:-${EXPECTED_CHECKPOINTS}}"
+EXPECTED_MARGINS="${EXPECTED_MARGINS:-}"
+EXPECTED_AUTO_RANK_MULTIPLE="${EXPECTED_AUTO_RANK_MULTIPLE:-}"
+EXPECTED_COMPILE_MODE="${EXPECTED_COMPILE_MODE:-}"
+EXPECTED_RESIDUAL_GUARD="${EXPECTED_RESIDUAL_GUARD:-}"
 HF_CACHE_DIR="/workspace-SR006.nfs2/dimativator/.hf-cache/datasets--DimaTivator--spectral-wd-500m-checkpoints"
 OUTPUT_PATH="${RESULT_DIR}/results.json"
 
+if [[ ! "${EXPECTED_ROOT}" =~ ^/workspace-SR006\.nfs2/dimativator/spectral-wd-500m(-[a-zA-Z0-9._-]+)?$ ]]; then
+    echo "Refusing unsafe EXPECTED_ROOT=${EXPECTED_ROOT}"
+    exit 1
+fi
 if [[ "$(realpath -m "${CHECKPOINT_ROOT}")" != "${EXPECTED_ROOT}" ]]; then
     echo "Refusing unexpected CHECKPOINT_ROOT=${CHECKPOINT_ROOT}"
     exit 1
@@ -22,16 +31,47 @@ if [[ ! -f "${OUTPUT_PATH}" ]]; then
     echo "Missing benchmark result: ${OUTPUT_PATH}"
     exit 1
 fi
+if [[ ! -f "${RESULT_DIR}/BENCHMARK_EXIT_0" ]]; then
+    echo "Benchmark did not report exit 0"
+    exit 1
+fi
 
-python - "${OUTPUT_PATH}" "${EXPECTED_CHECKPOINTS}" <<'PY'
+python - "${OUTPUT_PATH}" "${EXPECTED_CHECKPOINTS}" "${EXPECTED_ROWS}" "${EXPECTED_MARGINS}" "${EXPECTED_AUTO_RANK_MULTIPLE}" "${EXPECTED_COMPILE_MODE}" "${EXPECTED_RESIDUAL_GUARD}" <<'PY'
 import json
 import sys
+from collections import defaultdict
+from pathlib import Path
 
 payload = json.load(open(sys.argv[1]))
-expected = int(sys.argv[2])
-if len(payload.get("checkpoints", [])) != expected:
-    raise SystemExit(f"Refusing cleanup: expected {expected} completed checkpoints")
-print(f"RESULT_VALIDATED_CHECKPOINTS={expected}")
+expected_checkpoints = int(sys.argv[2])
+expected_rows = int(sys.argv[3])
+expected_margins = {int(value) for value in sys.argv[4].replace(",", " ").split()} if sys.argv[4] else None
+expected_multiple = int(sys.argv[5]) if sys.argv[5] else None
+expected_compile_mode = sys.argv[6] or None
+expected_guard = float(sys.argv[7]) if sys.argv[7] else None
+entries = payload.get("checkpoints", [])
+if len(entries) != expected_rows:
+    raise SystemExit(f"Refusing cleanup: expected {expected_rows} rows, found {len(entries)}")
+if expected_multiple is not None and payload.get("auto_rank_multiple") != expected_multiple:
+    raise SystemExit("Refusing cleanup: wrong auto_rank_multiple")
+if expected_compile_mode is not None and payload.get("compile_mode") != expected_compile_mode:
+    raise SystemExit("Refusing cleanup: wrong compile mode")
+if expected_guard is not None and payload.get("max_whitened_relative_residual") != expected_guard:
+    raise SystemExit("Refusing cleanup: wrong residual guard")
+by_label = defaultdict(set)
+for row in entries:
+    label = Path(row["checkpoint"]).parents[2].name
+    by_label[label].add(int(row.get("margin", 0)))
+    if row.get("factor_order_check", {}).get("factor_order") != "B_then_A":
+        raise SystemExit(f"Refusing cleanup: wrong factor order for {label}")
+if len(by_label) != expected_checkpoints:
+    raise SystemExit(f"Refusing cleanup: expected {expected_checkpoints} checkpoint labels")
+if expected_margins is not None:
+    for label, margins in by_label.items():
+        if margins != expected_margins:
+            raise SystemExit(f"Refusing cleanup: wrong margins for {label}")
+print(f"RESULT_VALIDATED_CHECKPOINTS={expected_checkpoints}")
+print(f"RESULT_VALIDATED_ROWS={expected_rows}")
 PY
 
 if [[ -d "${CHECKPOINT_ROOT}" ]]; then

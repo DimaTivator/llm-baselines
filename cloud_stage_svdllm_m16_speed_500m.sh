@@ -24,4 +24,4 @@ STATUS=${PIPESTATUS[0]}
 echo "EXIT=${STATUS}"
 echo "LOG=${LOG_PATH}"
 tail -100 "${LOG_PATH}"
-exit 0
+exit "${STATUS}"
