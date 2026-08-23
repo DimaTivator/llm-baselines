@@ -323,14 +323,16 @@ def _compression_rate(orig_model, comp_info: dict) -> float:
     stored in factored low-rank form (rank * (out + in) instead of out * in)."""
     total = sum(p.numel() for p in orig_model.parameters())
     named = dict(orig_model.named_modules())
-    saved = 0
+    comp_total = total
     for name, r in comp_info.items():
         m = named.get(name)
         if m is None or not hasattr(m, "weight"):
             continue
         out_f, in_f = m.weight.shape
-        saved += max(0, out_f * in_f - r * (out_f + in_f))
-    comp_total = total - saved
+        # A low-rank representation can expand a layer when r is large.  Count
+        # that expansion rather than clamping it away, otherwise CR is falsely
+        # reported as >= 1 even when the deployed model has more parameters.
+        comp_total += r * (out_f + in_f) - out_f * in_f
     return total / comp_total if comp_total > 0 else float("inf")
 
 
