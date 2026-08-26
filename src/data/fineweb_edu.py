@@ -9,7 +9,13 @@ from tqdm import tqdm
 tknzr = tiktoken.get_encoding("gpt2")
 
 
-def get_fineweb_edu_data(datasets_dir, num_proc=5, max_files=None, tokenized_data_dir=None):
+def get_fineweb_edu_data(
+    datasets_dir,
+    num_proc=5,
+    max_files=None,
+    tokenized_data_dir=None,
+    require_tokenized=False,
+):
     """To change the cache dir, run `export HF_HOME=/path/to/cache/` before running the code.
 
     Local parquet files are searched in this order:
@@ -30,7 +36,25 @@ def get_fineweb_edu_data(datasets_dir, num_proc=5, max_files=None, tokenized_dat
     if tokenized_data_dir is not None:
         FWEB_DATA_PATH = tokenized_data_dir
 
-    if not os.path.exists(os.path.join(FWEB_DATA_PATH, "train.bin")):
+    data_paths = {
+        split: os.path.join(FWEB_DATA_PATH, f"{split}.bin")
+        for split in ("train", "val")
+    }
+    if require_tokenized:
+        missing = [
+            path
+            for path in data_paths.values()
+            if not os.path.isfile(path) or os.path.getsize(path) == 0
+        ]
+        if missing:
+            missing_text = ", ".join(missing)
+            raise FileNotFoundError(
+                "Pre-tokenized FineWeb-Edu data is required, but these files "
+                f"are missing or empty: {missing_text}"
+            )
+        return data_paths
+
+    if not os.path.exists(data_paths["train"]):
         os.makedirs(FWEB_DATA_PATH, exist_ok=True)
 
         if local_files:
@@ -96,10 +120,7 @@ def get_fineweb_edu_data(datasets_dir, num_proc=5, max_files=None, tokenized_dat
                 idx += len(arr_batch)
             arr.flush()
 
-    return {
-        "train": os.path.join(FWEB_DATA_PATH, "train.bin"),
-        "val": os.path.join(FWEB_DATA_PATH, "val.bin"),
-    }
+    return data_paths
 
 
 if __name__ == "__main__":

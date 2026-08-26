@@ -267,6 +267,11 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--tokenized_data_dir", default=None, type=none_or_str,
                         help="Directory to store tokenized .bin files. Defaults to the parquet directory.")
     parser.add_argument(
+        "--require_tokenized_data",
+        action="store_true",
+        help="Fail instead of downloading or tokenizing when train.bin/val.bin are unavailable.",
+    )
+    parser.add_argument(
         "--dataset",
         default="slimpajama",
         choices=[

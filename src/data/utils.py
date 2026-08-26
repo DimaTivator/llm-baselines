@@ -76,7 +76,12 @@ def get_dataset(args) -> Dict[str, np.ndarray]:
     if args.dataset == "fineweb":
         return get_fineweb_data(args.datasets_dir)
     if args.dataset == "finewebedu":
-        return get_fineweb_edu_data(args.datasets_dir, max_files=args.finewebedu_max_files, tokenized_data_dir=args.tokenized_data_dir)
+        return get_fineweb_edu_data(
+            args.datasets_dir,
+            max_files=args.finewebedu_max_files,
+            tokenized_data_dir=args.tokenized_data_dir,
+            require_tokenized=getattr(args, "require_tokenized_data", False),
+        )
     if args.dataset == "c4":
         return get_c4_data(args.datasets_dir)
     if args.dataset in SUPPORTED_TASK_MAP:

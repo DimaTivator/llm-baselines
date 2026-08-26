@@ -47,11 +47,27 @@ assert _current_rank_fraction(1.0, 0.25, "cosine", 800, 1000) == 0.25
 print("NUMUON_CUDA_PREFLIGHT=OK")
 PY
 
-DATA_ROOT=${FINEWEBEDU_ROOT:-"/home/jovyan/finewebedu_h200"}
+DATA_ROOT=${FINEWEBEDU_ROOT:-"/workspace-SR006.nfs2/dimativator/finewebedu_h200"}
 DATASETS_DIR="$DATA_ROOT/sample/100BT"
 TOKENIZED_DATA_DIR="$DATA_ROOT/tokenized"
-test -s "$TOKENIZED_DATA_DIR/train.bin"
-test -s "$TOKENIZED_DATA_DIR/val.bin"
+TRAIN_BIN="$TOKENIZED_DATA_DIR/train.bin"
+VAL_BIN="$TOKENIZED_DATA_DIR/val.bin"
+TRAIN_SHA256=5a4c532cf1a142834f918f509fc678c178d8edc0df70eaffecc93a955b2f98af
+VAL_SHA256=d3025934e78388200ace8ab058eef34a0dd5a0a3e961d08d637665f436c4996e
+
+for data_file in "$TRAIN_BIN" "$VAL_BIN"; do
+    if [ ! -s "$data_file" ]; then
+        echo "DATA_PREFLIGHT_FAILED missing_or_empty=$data_file"
+        exit 2
+    fi
+done
+
+echo "DATA_PREFLIGHT_STAGE=sha256"
+printf '%s  %s\n%s  %s\n' \
+    "$TRAIN_SHA256" "$TRAIN_BIN" \
+    "$VAL_SHA256" "$VAL_BIN" \
+    | sha256sum --check --strict || exit 2
+echo "DATA_PREFLIGHT=OK root=$DATA_ROOT"
 
 WARMUP_STEPS=$((ITERATIONS / 4))
 if [ "$WARMUP_STEPS" -lt 1 ]; then
@@ -111,6 +127,7 @@ python ./src/main.py \
     --log_interval 1 \
     --finewebedu_max_files 5 \
     --tokenized_data_dir "$TOKENIZED_DATA_DIR" \
+    --require_tokenized_data \
     --effective_rank_interval 500 \
     --numuon_rank_fraction 1.0 \
     --numuon_rank_fraction_final 0.25 \
