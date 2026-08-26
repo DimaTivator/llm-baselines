@@ -9,8 +9,7 @@ if [ "$CACHE_ROOT" != "/workspace-SR006.nfs2/dimativator/hf-cache-finewebedu-h20
     exit 2
 fi
 
-echo "CACHE_BEFORE"
-du -sh "$CACHE_ROOT" 2>/dev/null || true
+echo "CACHE_CLEANUP_START=$CACHE_ROOT"
 rm -rf -- "$CACHE_ROOT"
 
 for path in "$DATA_ROOT/tokenized/train.bin" "$DATA_ROOT/tokenized/val.bin"; do
