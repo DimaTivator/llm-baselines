@@ -55,7 +55,10 @@ def test_optimizer_uses_numuon_lion_and_adamw_parameter_classes():
 
     matrix_update = (before_matrix * 0.98 - matrix.detach()) / 0.1
     singular_values = torch.linalg.svdvals(matrix_update)
-    assert torch.allclose(singular_values[:2], torch.ones(2), atol=3e-4)
+    expected_scale = (6 / 4) ** 0.5
+    assert torch.allclose(
+        singular_values[:2], torch.full((2,), expected_scale), atol=3e-4
+    )
     assert singular_values[2] < 3e-4
     assert torch.equal(
         scalar.detach(), before_scalar - 0.1 * scalar_grad.sign()
