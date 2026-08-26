@@ -165,6 +165,14 @@ def parse_args(base_parser, args, namespace):
                         help="Schedule for nuMuon rank fraction annealing.")
     parser.add_argument("--numuon_svd_niter", default=2, type=int,
                         help="Randomized SVD power iterations for nuMuon.")
+    parser.add_argument("--numuon_svd_oversample", default=8, type=int,
+                        help="Extra randomized Block Krylov vectors (paper default: 8).")
+    parser.add_argument("--numuon_rank_hold_fraction", default=0.1, type=float,
+                        help="Initial fraction of training held at the starting rank.")
+    parser.add_argument("--numuon_rank_decay_end_fraction", default=0.8, type=float,
+                        help="Training fraction by which the final rank is reached.")
+    parser.add_argument("--numuon_adamw_lr_factor", default=0.5, type=float,
+                        help="Embedding/head AdamW LR relative to the NuMuon matrix LR.")
     # Cuttlefish: low-rank training via periodic SVD projection
     parser.add_argument("--cuttlefish_rank_fraction", default=0.5, type=float,
                         help="Fraction of min(m,n) to keep when projecting weights to low rank.")

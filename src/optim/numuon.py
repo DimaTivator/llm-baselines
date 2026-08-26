@@ -19,44 +19,52 @@ from optim.muon import zeropower_via_newtonschulz5
 _NS_STEPS = 5  # default Newton-Schulz iterations (matches Muon default)
 
 
-def _block_krylov_svd(G, k, L=2, B0=None):
+def _block_krylov_svd(G, k, L=2, oversample=8, B0=None):
     """
     Algorithm 3 from the nuMuon paper (Musco & Musco 2015).
-    Builds a Krylov subspace of dimension b*(L+1) where b=k, then extracts
+    Builds a Krylov subspace with block size b=k+oversample, then extracts
     top-k singular triplets via a small SVD of the projected matrix.
 
     Args:
         G:  (m, n) float32 gradient matrix.
         k:  target rank.
         L:  number of Krylov iterations.
-        B0: optional warm-start right block (n, k); from previous step's V_k.
+        oversample: extra vectors in the Krylov block (8 in the paper).
+        B0: optional warm-start right block; from the previous step's V_k.
 
     Returns:
         U_k (m, k), S_k (k,), V_k (n, k)
     """
     _, n = G.shape
-    b = k  # block size = target rank
+    b = min(n, k + oversample)
 
-    # Run Krylov iterations in bfloat16 (fast matmuls); final SVD in float32.
-    Gbf = G.bfloat16()
+    # Run large CUDA matmuls in bfloat16; keep CPU tests and all factorizations
+    # in float32. The final small SVD is always float32.
+    matmul_dtype = torch.bfloat16 if G.is_cuda else torch.float32
+    Gbf = G.to(matmul_dtype)
 
     # --- Initialize B_0 ---
-    if B0 is not None and B0.shape == (n, b):
-        B = B0.bfloat16()
+    if B0 is not None and B0.ndim == 2 and B0.shape[0] == n:
+        B = B0[:, :b].float()
+        if B.shape[1] < b:
+            random = torch.randn(n, b - B.shape[1], device=G.device)
+            B = torch.cat((B, random), dim=1)
     else:
-        B = torch.randn(n, b, device=G.device, dtype=torch.bfloat16)
-    B, _ = torch.linalg.qr(B)  # (n, b) orthonormal columns
+        B = torch.randn(n, b, device=G.device)
+    # CUDA QR is not implemented for bfloat16. Keep the bases in fp32 and
+    # cast only for the large matrix multiplications.
+    B, _ = torch.linalg.qr(B, mode="reduced")
 
     # --- Build block Krylov basis K = [B_1 | B_2 | ... | B_L] ---
     K_blocks = []
     for _ in range(L):
-        T = Gbf @ B          # (m, b)
-        B = Gbf.T @ T        # (n, b)
-        B, _ = torch.linalg.qr(B)
+        T = Gbf @ B.to(matmul_dtype)    # (m, b)
+        B = (Gbf.T @ T).float()         # (n, b)
+        B, _ = torch.linalg.qr(B, mode="reduced")
         K_blocks.append(B)
 
     K = torch.cat(K_blocks, dim=1)   # (n, b*L)
-    Q, _ = torch.linalg.qr(K)        # (n, b*L) orthonormal basis
+    Q, _ = torch.linalg.qr(K, mode="reduced")
 
     # --- Project and compute small SVD in float32 for numerical stability ---
     T = G @ Q.float()                                           # (m, b*L)
@@ -69,10 +77,10 @@ def _block_krylov_svd(G, k, L=2, B0=None):
     return U_k, S_k, V_k
 
 
-def _numuon_svd_update(G, k, niter=2, B0=None):
+def _numuon_svd_update(G, k, niter=2, oversample=8, B0=None):
     """
     Compute top-k singular direction update U_k @ V_k^T.
-    - Near full-rank (k >= 99% of min(m,n)): Newton-Schulz (fast, bf16 matmuls).
+    - Full-rank: Newton-Schulz, which computes the same polar-factor update.
     - Low-rank: Block Krylov SVD (Algorithm 3 from the nuMuon paper),
       with optional warm-start B0 from the previous step's right singular vectors.
 
@@ -82,23 +90,36 @@ def _numuon_svd_update(G, k, niter=2, B0=None):
     full_rank = min(m, n)
     k = max(1, min(k, full_rank))
 
-    # Use Newton-Schulz when k is within 1% of full rank — SVD at near-full
-    # rank costs 6x more for negligible quality difference.
-    if k >= full_rank * 0.99:
+    if k == full_rank:
         update = zeropower_via_newtonschulz5(G.bfloat16(), steps=_NS_STEPS).to(G.dtype)
         return update, None
 
     # Low-rank path: Block Krylov SVD (float32 for numerical stability)
     orig_dtype = G.dtype
-    U_k, _, V_k = _block_krylov_svd(G.float(), k, L=niter, B0=B0)
+    U_k, _, V_k = _block_krylov_svd(
+        G.float(), k, L=niter, oversample=oversample, B0=B0
+    )
     update = (U_k @ V_k.T).to(orig_dtype)
     return update, V_k.to(orig_dtype).detach()
 
 
-def _current_rank_fraction(r_start, r_end, schedule, step, total_steps):
+def _current_rank_fraction(
+    r_start,
+    r_end,
+    schedule,
+    step,
+    total_steps,
+    hold_fraction=0.1,
+    decay_end_fraction=0.8,
+):
     if r_end is None or schedule == "fixed" or total_steps is None or total_steps <= 0:
         return r_start
     t = min(step / total_steps, 1.0)
+    if t <= hold_fraction:
+        return r_start
+    if t >= decay_end_fraction:
+        return r_end
+    t = (t - hold_fraction) / (decay_end_fraction - hold_fraction)
     if schedule == "cosine":
         return r_end + 0.5 * (r_start - r_end) * (1.0 + math.cos(math.pi * t))
     elif schedule == "linear":
@@ -116,13 +137,14 @@ class NuMuon(torch.optim.Optimizer):
         muon_params: Parameters to be optimized by nuMuon (>=2D, non-embedding).
         lr: Learning rate. (0.02 is a good default, same as Muon)
         momentum: SGD momentum coefficient. (0.95 is a good default)
-        nesterov: Use Nesterov-style momentum. (recommended)
+        nesterov: Optional Nesterov-style momentum (disabled in the paper recipe).
         rank_fraction: Initial fraction of singular directions to use (0 < r <= 1).
         rank_fraction_final: Final rank fraction after schedule. None = fixed.
         rank_schedule: Annealing schedule for rank: 'fixed', 'cosine', or 'linear'.
         total_steps: Total training iterations (required for non-fixed schedule).
-        svd_niter: Randomized SVD power iterations. 2 is sufficient for most cases.
-        adamw_params: Parameters to be optimized by AdamW (1D, embeddings, lm_head).
+        svd_niter: Randomized block Krylov iterations (2 in the paper).
+        svd_oversample: Extra Krylov block vectors (8 in the paper).
+        adamw_params: Additional parameters to include in optimizer classification.
         adamw_lr: Learning rate for the internal AdamW.
         adamw_betas: Betas for the internal AdamW.
         adamw_eps: Epsilon for the internal AdamW.
@@ -134,12 +156,16 @@ class NuMuon(torch.optim.Optimizer):
         muon_params,
         lr=0.02,
         momentum=0.95,
-        nesterov=True,
+        nesterov=False,
         rank_fraction=1.0,
         rank_fraction_final=None,
         rank_schedule="cosine",
         total_steps=None,
         svd_niter=2,
+        svd_oversample=8,
+        rank_hold_fraction=0.1,
+        rank_decay_end_fraction=0.8,
+        weight_decay=0.1,
         adamw_params=None,
         adamw_lr=3e-4,
         adamw_betas=(0.95, 0.95),
@@ -155,6 +181,10 @@ class NuMuon(torch.optim.Optimizer):
             rank_schedule=rank_schedule,
             total_steps=total_steps,
             svd_niter=svd_niter,
+            svd_oversample=svd_oversample,
+            rank_hold_fraction=rank_hold_fraction,
+            rank_decay_end_fraction=rank_decay_end_fraction,
+            weight_decay=weight_decay,
             adamw_lr=adamw_lr,
             adamw_lr_ratio=adamw_lr / lr,
             adamw_betas=adamw_betas,
@@ -162,16 +192,25 @@ class NuMuon(torch.optim.Optimizer):
             adamw_wd=adamw_wd,
         )
 
+        muon_params = list(muon_params)
         params = list(muon_params)
         adamw_params = list(adamw_params) if adamw_params is not None else []
         params.extend(adamw_params)
         super().__init__(params, defaults)
 
+        if not 0.0 <= rank_hold_fraction < rank_decay_end_fraction <= 1.0:
+            raise ValueError(
+                "Expected 0 <= rank_hold_fraction < "
+                "rank_decay_end_fraction <= 1."
+            )
+
         for p in muon_params:
             # Apply nuMuon to >=2D params that are not large embedding-like matrices
             self.state[p]["use_numuon"] = p.ndim >= 2 and p.size(0) < 10000
+            self.state[p]["use_scalar_lion"] = p.ndim < 2
         for p in adamw_params:
             self.state[p]["use_numuon"] = False
+            self.state[p]["use_scalar_lion"] = p.ndim < 2
 
         if "WORLD_SIZE" in os.environ:
             self.world_size = int(os.environ["WORLD_SIZE"])
@@ -199,12 +238,20 @@ class NuMuon(torch.optim.Optimizer):
                 group["rank_schedule"],
                 current_step,
                 group["total_steps"],
+                group["rank_hold_fraction"],
+                group["rank_decay_end_fraction"],
             )
 
             total_params = sum(p.numel() for p in params)
-            updates_flat = torch.zeros(
-                total_params, device="cuda", dtype=torch.bfloat16
-            )
+            # The flat buffer is only needed to exchange sharded updates. Avoid
+            # allocating and copying an extra model-sized tensor on one GPU.
+            updates_flat = None
+            if self.world_size > 1:
+                updates_flat = torch.zeros(
+                    total_params,
+                    device=params[0].device if params else group["params"][0].device,
+                    dtype=torch.bfloat16,
+                )
             curr_idx = 0
 
             for i, p in enumerate(params):
@@ -218,7 +265,7 @@ class NuMuon(torch.optim.Optimizer):
                     if "momentum_buffer" not in state:
                         state["momentum_buffer"] = torch.zeros_like(g)
                     buf = state["momentum_buffer"]
-                    buf.mul_(momentum).add_(g)
+                    buf.lerp_(g, 1 - momentum)
                     g = g.add(buf, alpha=momentum) if group["nesterov"] else buf.clone()
 
                     m, n = g.shape
@@ -226,41 +273,64 @@ class NuMuon(torch.optim.Optimizer):
 
                     # Top-k SVD update: U_k @ V_k^T (warm-start B0 from last step)
                     update, v_k = _numuon_svd_update(
-                        g, k, niter=svd_niter, B0=state.get("krylov_V")
+                        g,
+                        k,
+                        niter=svd_niter,
+                        oversample=group["svd_oversample"],
+                        B0=state.get("krylov_V"),
                     )
                     if v_k is not None:
                         state["krylov_V"] = v_k  # warm-start for next step
 
-                    # Normalize to match Muon's update magnitude: scale by
-                    # max(1, m/n)^0.5 * sqrt(min(m,n)/k) so that at rank_fraction=1
-                    # the RMS matches Muon, and the magnitude stays consistent for
-                    # different rank fractions.
-                    scale = max(1.0, m / n) ** 0.5 * (min(m, n) / k) ** 0.5
+                    # Muon's rectangular-matrix scaling. Do not normalize by k:
+                    # the NuMuon LMO requires all k nonzero singular values to be 1.
+                    scale = max(1.0, m / n) ** 0.5
                     update = update * scale
 
-                    updates_flat[curr_idx : curr_idx + p.numel()] = update.flatten()
-                    # Store the scaled update for effective-rank tracking
-                    state["last_update"] = update.detach()
+                    if updates_flat is None:
+                        p.data.mul_(1 - lr * group["weight_decay"])
+                        p.data.add_(update, alpha=-lr)
+                    else:
+                        updates_flat[curr_idx : curr_idx + p.numel()] = update.flatten()
                 curr_idx += p.numel()
 
             if self.world_size > 1:
                 dist.all_reduce(updates_flat, op=dist.ReduceOp.SUM)
-
-            curr_idx = 0
-            for p in params:
-                g = (
-                    updates_flat[curr_idx : curr_idx + p.numel()]
-                    .view_as(p.data)
-                    .type_as(p.data)
-                )
-                p.data.add_(g, alpha=-lr)
-                curr_idx += p.numel()
+                curr_idx = 0
+                for p in params:
+                    g = (
+                        updates_flat[curr_idx : curr_idx + p.numel()]
+                        .view_as(p.data)
+                        .type_as(p.data)
+                    )
+                    p.data.mul_(1 - lr * group["weight_decay"])
+                    p.data.add_(g, alpha=-lr)
+                    curr_idx += p.numel()
 
             group["step"] += 1
 
-            # ---- AdamW for non-nuMuon params (1D, embeddings, lm_head) ----
+            # ---- Lion for scalar (non-matrix) parameters ----
+            params_lion = [
+                p for p in group["params"] if self.state[p]["use_scalar_lion"]
+            ]
+            beta1, beta2 = group["adamw_betas"]
+            for p in params_lion:
+                grad = p.grad
+                assert grad is not None
+                state = self.state[p]
+                if "lion_exp_avg" not in state:
+                    state["lion_exp_avg"] = torch.zeros_like(grad)
+                exp_avg = state["lion_exp_avg"]
+                update = exp_avg * beta1 + grad * (1 - beta1)
+                p.data.add_(update.sign(), alpha=-lr)
+                exp_avg.lerp_(grad, 1 - beta2)
+
+            # ---- AdamW for embeddings and the language-model head ----
             params_adamw = [
-                p for p in group["params"] if not self.state[p]["use_numuon"]
+                p
+                for p in group["params"]
+                if not self.state[p]["use_numuon"]
+                and not self.state[p]["use_scalar_lion"]
             ]
             lr_adamw = group["adamw_lr_ratio"] * group["lr"]
             beta1, beta2 = group["adamw_betas"]

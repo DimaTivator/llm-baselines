@@ -469,7 +469,7 @@ def main(args, parser):
         )
         opt = NuMuon(
             muon_params=param_list,
-            lr=args.lr,
+            lr=args.muon_lr_factor,
             momentum=args.momentum,
             nesterov=args.nesterov,
             rank_fraction=args.numuon_rank_fraction,
@@ -477,8 +477,12 @@ def main(args, parser):
             rank_schedule=args.numuon_rank_schedule,
             total_steps=args.iterations,
             svd_niter=args.numuon_svd_niter,
+            svd_oversample=args.numuon_svd_oversample,
+            rank_hold_fraction=args.numuon_rank_hold_fraction,
+            rank_decay_end_fraction=args.numuon_rank_decay_end_fraction,
+            weight_decay=args.weight_decay,
             adamw_params=None,
-            adamw_lr=args.lr,
+            adamw_lr=args.muon_lr_factor * args.numuon_adamw_lr_factor,
             adamw_betas=(args.beta1, args.beta2),
             adamw_eps=1e-8,
             adamw_wd=args.weight_decay,
