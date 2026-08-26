@@ -55,11 +55,14 @@ def _singular_value_threshold(W, tau):
 
 
 class AdamWSpectralL1Reg(torch.optim.Optimizer):
-    """AdamW with spectral L1 (nuclear-norm) regularization as a faithful proximal step.
+    """AdamW with decoupled or coupled spectral L1 regularization.
 
-    The nuclear-norm prox is applied to the *gradient-stepped* weights
-    Z = W - lr*adam_update (i.e. after the AdamW update), matching proximal
-    gradient descent W_{k+1} = prox(W_k - lr*grad).
+    By default the nuclear-norm prox is applied to the *gradient-stepped*
+    weights Z = W - lr*adam_update, matching proximal gradient descent
+    W_{k+1} = prox(W_k - lr*grad). Set ``coupled=True`` to instead add the
+    nuclear-norm subgradient to the task gradient before Adam updates its
+    moments. This leaves the model's reported task loss unchanged while making
+    the regularizer part of the adaptive Adam update.
 
     On most steps the prox is approximated by the cheap Newton-Schulz subgradient
     step (subtract tau*U V^T, tau = lr*spectral_l1_reg_coef). Every ``svt_interval``
@@ -78,6 +81,7 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
         spectral_l1_reg_coef=0.1,
         svt_interval=0,
         svt_thresh=None,
+        coupled=False,
     ):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
@@ -91,6 +95,11 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
             raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
         if svt_interval < 0:
             raise ValueError("svt_interval must be >= 0")
+        if coupled and svt_interval != 0:
+            raise ValueError(
+                "coupled spectral L1 regularization does not support svt_interval; "
+                "SVT is a decoupled proximal step"
+            )
         defaults = dict(
             lr=lr,
             betas=betas,
@@ -99,6 +108,7 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
             spectral_l1_reg_coef=spectral_l1_reg_coef,
             svt_interval=svt_interval,
             svt_thresh=svt_thresh,
+            coupled=coupled,
         )
 
         super(AdamWSpectralL1Reg, self).__init__(params, defaults)
@@ -121,6 +131,7 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
             spectral_l1_reg_coef = group["spectral_l1_reg_coef"]
             svt_interval = group["svt_interval"]
             svt_thresh = group["svt_thresh"]
+            coupled = group["coupled"]
 
             for p in group["params"]:
                 grad = p.grad
@@ -152,10 +163,29 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
                 bias_correction1 = 1 - beta1 ** state["step"]
                 bias_correction2 = 1 - beta2 ** state["step"]
 
+                # Coupled spectral WD adds the nuclear-norm subgradient to the
+                # task gradient before Adam updates either moment. ``grad`` is
+                # deliberately not modified so logged task loss and accumulated
+                # task gradients remain separate from the regularizer.
+                orig_shape = p.data.shape
+                is_conv = len(orig_shape) == 4
+                adam_grad = grad
+                if (
+                    coupled
+                    and (len(orig_shape) == 2 or is_conv)
+                    and spectral_l1_reg_coef > 0
+                ):
+                    weight = p.data.view(orig_shape[0], -1) if is_conv else p.data
+                    nuclear_subgradient = zeropower_via_newtonschulz5(weight, 5)
+                    adam_grad = grad.add(
+                        nuclear_subgradient.view(orig_shape) if is_conv else nuclear_subgradient,
+                        alpha=spectral_l1_reg_coef,
+                    )
+
                 # --- AdamW gradient step: p.data -> Z = W - lr * adam_update ---
                 # Decay the first and second moment running average coefficient
-                m.lerp_(grad, 1 - beta1)
-                v.mul_(beta2).addcmul_(grad, grad, value=(1 - beta2))
+                m.lerp_(adam_grad, 1 - beta1)
+                v.mul_(beta2).addcmul_(adam_grad, adam_grad, value=(1 - beta2))
 
                 denom = (v.sqrt() / math.sqrt(bias_correction2)).add_(eps)
 
@@ -166,9 +196,11 @@ class AdamWSpectralL1Reg(torch.optim.Optimizer):
                 # [out_ch, in_ch, kh, kw] are viewed as the standard "filter
                 # matrix" [out_ch, in_ch*kh*kw] so the same 2D nuclear-norm
                 # prox applies to them too, unmodified otherwise.
-                orig_shape = p.data.shape
-                is_conv = len(orig_shape) == 4
-                if (len(orig_shape) == 2 or is_conv) and spectral_l1_reg_coef > 0:
+                if (
+                    not coupled
+                    and (len(orig_shape) == 2 or is_conv)
+                    and spectral_l1_reg_coef > 0
+                ):
                     W = p.data.view(orig_shape[0], -1) if is_conv else p.data
                     do_svt = (
                         svt_interval > 0 and state["step"] % svt_interval == 0

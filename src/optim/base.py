@@ -363,6 +363,8 @@ def train(
                     "weight_decay": opt.param_groups[0].get("weight_decay", 0.0),
                     **({"spectral_l1_reg_coef": opt.param_groups[0]["spectral_l1_reg_coef"]}
                        if "spectral_l1_reg_coef" in opt.param_groups[0] else {}),
+                    **({"spectral_l1_reg_coupled": int(opt.param_groups[0]["coupled"])}
+                       if "coupled" in opt.param_groups[0] else {}),
                     "iter_dt": dt,
                     "max_grad_norm": max(grad_norms).item() if grad_norms else 0,
                     "mean_grad_norm": (

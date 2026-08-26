@@ -395,6 +395,10 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--spectral_l1_svt_thresh", default=None, type=float,
                         help="Absolute singular-value threshold for the periodic SVT step. "
                              "If unset, uses lr * spectral_l1_reg_coef (the per-step subgradient amount).")
+    parser.add_argument("--spectral_l1_reg_coupled", action="store_true",
+                        help="adamw-spectral-l1-reg: add the nuclear-norm subgradient to the task "
+                             "gradient before Adam updates its moments, instead of applying a separate "
+                             "post-update spectral step. The logged loss remains the task loss.")
 
     # muon-nuclear-reg: nuclear-norm subgradient (UV^T, approximated via Newton-Schulz
     # on W itself) injected into the gradient before the Muon momentum/orthogonalization step.
