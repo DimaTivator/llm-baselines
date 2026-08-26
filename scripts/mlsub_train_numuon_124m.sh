@@ -29,6 +29,24 @@ export PYTHONUNBUFFERED=1
 echo "INSTALL_STAGE=training_and_downstream_dependencies"
 bash ./scripts/install_mlsub_training_deps.sh || exit $?
 
+echo "PREFLIGHT_STAGE=numuon_cuda_math"
+PYTHONPATH=./src python - <<'PY'
+import torch
+
+from optim.numuon import _block_krylov_svd, _current_rank_fraction
+
+device = torch.device("cuda:0")
+torch.manual_seed(0)
+matrix = torch.randn(32, 24, device=device)
+u, _, v = _block_krylov_svd(matrix, 6, L=2, oversample=8)
+singular_values = torch.linalg.svdvals(u @ v.T)
+assert torch.allclose(singular_values[:6], torch.ones(6, device=device), atol=3e-3)
+assert singular_values[6] < 3e-3
+assert _current_rank_fraction(1.0, 0.25, "cosine", 100, 1000) == 1.0
+assert _current_rank_fraction(1.0, 0.25, "cosine", 800, 1000) == 0.25
+print("NUMUON_CUDA_PREFLIGHT=OK")
+PY
+
 DATA_ROOT=${FINEWEBEDU_ROOT:-"/home/jovyan/finewebedu_h200"}
 DATASETS_DIR="$DATA_ROOT/sample/100BT"
 TOKENIZED_DATA_DIR="$DATA_ROOT/tokenized"
