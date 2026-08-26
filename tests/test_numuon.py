@@ -61,3 +61,10 @@ def test_optimizer_uses_numuon_lion_and_adamw_parameter_classes():
         scalar.detach(), before_scalar - 0.1 * scalar_grad.sign()
     )
     assert "moment1" in optimizer.state[embedding]
+
+
+if __name__ == "__main__":
+    test_paper_rank_schedule_has_hold_and_finishes_before_cooldown()
+    test_block_krylov_returns_top_k_polar_factor_with_unit_singular_values()
+    test_optimizer_uses_numuon_lion_and_adamw_parameter_classes()
+    print("NUMUON_CPU_TESTS=OK")
