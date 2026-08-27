@@ -107,6 +107,7 @@ def parse_args(base_parser, args, namespace):
         default="adamw",
         choices=[
             "adamw",
+            "galore",
             "sgd",
             "muon",
             "soap",
@@ -139,6 +140,15 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--batch_size", default=50, type=int)
     parser.add_argument("--acc_steps", default=1, type=int)
     parser.add_argument("--weight_decay", default=1e-1, type=float)
+    parser.add_argument("--galore_rank", default=128, type=int,
+                        help="Rank of the GaLore gradient projection.")
+    parser.add_argument("--galore_update_proj_gap", default=200, type=int,
+                        help="Optimizer steps between GaLore basis refreshes.")
+    parser.add_argument("--galore_scale", default=1.0, type=float,
+                        help="Scale applied after projecting GaLore updates back.")
+    parser.add_argument("--galore_weight_decay_type", default="l2",
+                        choices=["l2", "spectral"],
+                        help="Use decoupled L2 or spectral L1 weight decay on GaLore matrices.")
     parser.add_argument("--beta1", default=0.9, type=float)
     parser.add_argument("--beta2", default=0.95, type=float)
     parser.add_argument(

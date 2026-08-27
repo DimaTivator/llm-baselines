@@ -275,7 +275,7 @@ def train(
             scheduler.step()
 
         if (
-            cfg.opt in ("adamw-spectral-l1-reg", "lion-spectral-l1-reg")
+            cfg.opt in ("adamw-spectral-l1-reg", "lion-spectral-l1-reg", "galore")
             and getattr(cfg, "spectral_l1_reg_switch_step", None) is not None
             and getattr(cfg, "spectral_l1_reg_coef_final", None) is not None
             and curr_iter + 1 == cfg.spectral_l1_reg_switch_step

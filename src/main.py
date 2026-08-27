@@ -40,6 +40,7 @@ from optim.muon_nuclear_reg import MuonNuclearReg
 from optim.soap_spectral_L1_reg import SOAPSpectralL1Reg
 from optim.numuon import NuMuon
 from optim.cuttlefish import Cuttlefish
+from optim.galore import GaLoreAdamW, build_galore_param_groups
 from optim.utils import upload_checkpoint_to_hf
 
 
@@ -165,6 +166,24 @@ def main(args, parser):
             betas=(args.beta1, args.beta2),
             weight_decay=args.weight_decay,
             **extra_args,
+        )
+    elif args.opt == "galore":
+        galore_groups = build_galore_param_groups(
+            group_specs,
+            rank=args.galore_rank,
+            update_proj_gap=args.galore_update_proj_gap,
+            scale=args.galore_scale,
+        )
+        opt = GaLoreAdamW(
+            galore_groups,
+            lr=args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.weight_decay,
+            weight_decay_type=args.galore_weight_decay_type,
+            spectral_l1_reg_coef=args.spectral_l1_reg_coef,
+            spectral_l1_reg_coupled=args.spectral_l1_reg_coupled,
+            svt_interval=args.spectral_l1_svt_interval,
+            svt_thresh=args.spectral_l1_svt_thresh,
         )
     elif args.opt == "soap":
         opt = SOAP(
