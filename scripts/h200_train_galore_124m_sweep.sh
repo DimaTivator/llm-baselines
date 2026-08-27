@@ -32,7 +32,7 @@ mkdir -p "$RUN_ROOT"
 "$PYTHON_BIN" -c 'import torch; print(f"CUDA_PREFLIGHT=OK gpu={torch.cuda.get_device_name(0)} free={torch.cuda.mem_get_info()[0] / 2**30:.1f}GiB")'
 
 for COEFFICIENT in "${COEFFICIENT_VALUES[@]}"; do
-    EXP_NAME="h200_gpu${GPU}_llama124m_galore_${DECAY_TYPE}_cf${COEFFICIENT}_lr${LR}_density${DENSITY}_finewebedu"
+    EXP_NAME="h200_gpu${GPU}_llama124m_galore_${DECAY_TYPE}_cf${COEFFICIENT}_lr${LR}_density${DENSITY}_finewebedu_nocp"
     EXP_DIR="$RUN_ROOT/$EXP_NAME"
     if [ -f "$EXP_DIR/COMPLETE" ]; then
         echo "SKIP_COMPLETE decay_type=$DECAY_TYPE cf=$COEFFICIENT"
@@ -80,7 +80,7 @@ for COEFFICIENT in "${COEFFICIENT_VALUES[@]}"; do
         --eval_interval 137 \
         --eval_batches 64 \
         --eval_batch_size 64 \
-        --latest_ckpt_interval 1000 \
+        --latest_ckpt_interval 0 \
         --permanent_ckpt_interval 0 \
         --log_interval 4 \
         --finewebedu_max_files 5 \
