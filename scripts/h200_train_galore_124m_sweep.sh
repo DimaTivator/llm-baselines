@@ -8,8 +8,8 @@ read -r -a COEFFICIENT_VALUES <<< "${COEFFICIENTS:?Set space-separated COEFFICIE
 DATASETS_DIR=${DATASETS_DIR:-"/data/users/dimativator/llm-baselines-soap/datasets"}
 TOKENIZED_DATA_DIR=${TOKENIZED_DATA_DIR:-"/data/users/dimativator/llm-baselines-soap/tokenized"}
 RUN_ROOT=${RUN_ROOT:-"$PWD/exps/galore_124m_h200"}
-LR=${LR:-1e-2}
-RANK=${RANK:-256}
+LR=${LR:-1e-3}
+DENSITY=${DENSITY:-0.25}
 UPDATE_PROJ_GAP=${UPDATE_PROJ_GAP:-200}
 GALORE_SCALE=${GALORE_SCALE:-0.25}
 ITERATIONS=${ITERATIONS:-19000}
@@ -32,7 +32,7 @@ mkdir -p "$RUN_ROOT"
 "$PYTHON_BIN" -c 'import torch; print(f"CUDA_PREFLIGHT=OK gpu={torch.cuda.get_device_name(0)} free={torch.cuda.mem_get_info()[0] / 2**30:.1f}GiB")'
 
 for COEFFICIENT in "${COEFFICIENT_VALUES[@]}"; do
-    EXP_NAME="h200_gpu${GPU}_llama124m_galore_${DECAY_TYPE}_cf${COEFFICIENT}_lr${LR}_rank${RANK}_finewebedu"
+    EXP_NAME="h200_gpu${GPU}_llama124m_galore_${DECAY_TYPE}_cf${COEFFICIENT}_lr${LR}_density${DENSITY}_finewebedu"
     EXP_DIR="$RUN_ROOT/$EXP_NAME"
     if [ -f "$EXP_DIR/COMPLETE" ]; then
         echo "SKIP_COMPLETE decay_type=$DECAY_TYPE cf=$COEFFICIENT"
@@ -56,7 +56,7 @@ for COEFFICIENT in "${COEFFICIENT_VALUES[@]}"; do
         --datasets_dir "$DATASETS_DIR" \
         --dataset finewebedu \
         --opt galore \
-        --galore_rank "$RANK" \
+        --galore_density "$DENSITY" \
         --galore_update_proj_gap "$UPDATE_PROJ_GAP" \
         --galore_scale "$GALORE_SCALE" \
         --galore_weight_decay_type "$DECAY_TYPE" \

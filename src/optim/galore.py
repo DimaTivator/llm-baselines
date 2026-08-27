@@ -15,17 +15,17 @@ class GaLoreProjector:
 
     def __init__(
         self,
-        rank: int,
+        density: float,
         update_proj_gap: int = 200,
         scale: float = 1.0,
     ) -> None:
-        if rank <= 0:
-            raise ValueError("rank must be > 0")
+        if not 0.0 < density <= 1.0:
+            raise ValueError("density must be in (0, 1]")
         if update_proj_gap <= 0:
             raise ValueError("update_proj_gap must be > 0")
         if scale <= 0.0:
             raise ValueError("scale must be > 0")
-        self.rank = rank
+        self.density = density
         self.update_proj_gap = update_proj_gap
         self.scale = scale
         self.ortho_matrix: torch.Tensor | None = None
@@ -62,7 +62,7 @@ class GaLoreProjector:
     def _orthogonal_matrix(
         self, matrix: torch.Tensor, project_right: bool
     ) -> torch.Tensor:
-        rank = min(self.rank, min(matrix.shape))
+        rank = max(1, round(self.density * min(matrix.shape)))
         original_dtype = matrix.dtype
         u, _, vh = torch.linalg.svd(matrix.float(), full_matrices=False)
         basis = vh[:rank, :] if project_right else u[:, :rank]
@@ -72,11 +72,14 @@ class GaLoreProjector:
 def build_galore_param_groups(
     param_groups: Iterable[dict[str, Any]],
     *,
-    rank: int,
+    density: float,
     update_proj_gap: int,
     scale: float,
 ) -> list[dict[str, Any]]:
     """Mark decay-enabled 2D weights for GaLore while preserving group options."""
+
+    if not 0.0 < density <= 1.0:
+        raise ValueError("density must be in (0, 1]")
 
     result: list[dict[str, Any]] = []
     for source_group in param_groups:
@@ -99,7 +102,7 @@ def build_galore_param_groups(
                     **group,
                     "params": galore_params,
                     "galore": True,
-                    "rank": rank,
+                    "density": density,
                     "update_proj_gap": update_proj_gap,
                     "scale": scale,
                 }
@@ -204,7 +207,7 @@ class GaLoreAdamW(torch.optim.Optimizer):
                 if use_galore:
                     if "projector" not in state:
                         state["projector"] = GaLoreProjector(
-                            rank=group["rank"],
+                            density=group["density"],
                             update_proj_gap=group["update_proj_gap"],
                             scale=group["scale"],
                         )

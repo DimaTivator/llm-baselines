@@ -140,8 +140,8 @@ def parse_args(base_parser, args, namespace):
     parser.add_argument("--batch_size", default=50, type=int)
     parser.add_argument("--acc_steps", default=1, type=int)
     parser.add_argument("--weight_decay", default=1e-1, type=float)
-    parser.add_argument("--galore_rank", default=128, type=int,
-                        help="Rank of the GaLore gradient projection.")
+    parser.add_argument("--galore_density", default=0.25, type=float,
+                        help="GaLore rank fraction relative to the smaller matrix dimension.")
     parser.add_argument("--galore_update_proj_gap", default=200, type=int,
                         help="Optimizer steps between GaLore basis refreshes.")
     parser.add_argument("--galore_scale", default=1.0, type=float,

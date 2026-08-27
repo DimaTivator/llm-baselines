@@ -1,7 +1,7 @@
 import torch
 
 from optim.adamw_spectral_L1_reg import zeropower_via_newtonschulz5
-from optim.galore import GaLoreAdamW, build_galore_param_groups
+from optim.galore import GaLoreAdamW, GaLoreProjector, build_galore_param_groups
 
 
 def _groups(matrix: torch.nn.Parameter, vector: torch.nn.Parameter) -> list[dict]:
@@ -10,7 +10,7 @@ def _groups(matrix: torch.nn.Parameter, vector: torch.nn.Parameter) -> list[dict
             {"params": [matrix]},
             {"params": [vector], "weight_decay": 0.0},
         ],
-        rank=2,
+        density=0.5,
         update_proj_gap=10,
         scale=1.0,
     )
@@ -31,6 +31,12 @@ def test_galore_keeps_matrix_moments_in_low_rank_space() -> None:
     assert optimizer.state[vector]["exp_avg"].shape == vector.shape
 
 
+def test_galore_density_sets_rank_per_matrix_shape() -> None:
+    projector = GaLoreProjector(density=0.25)
+
+    assert projector.project(torch.randn(8, 4), step=0).shape == (8, 1)
+
+
 def test_galore_does_not_project_no_decay_embedding_group() -> None:
     matrix = torch.nn.Parameter(torch.randn(6, 4))
     embedding = torch.nn.Parameter(torch.randn(10, 4))
@@ -39,7 +45,7 @@ def test_galore_does_not_project_no_decay_embedding_group() -> None:
             {"params": [matrix]},
             {"params": [embedding], "weight_decay": 0.0},
         ],
-        rank=2,
+        density=0.5,
         update_proj_gap=10,
         scale=1.0,
     )

@@ -170,7 +170,7 @@ def main(args, parser):
     elif args.opt == "galore":
         galore_groups = build_galore_param_groups(
             group_specs,
-            rank=args.galore_rank,
+            density=args.galore_density,
             update_proj_gap=args.galore_update_proj_gap,
             scale=args.galore_scale,
         )
